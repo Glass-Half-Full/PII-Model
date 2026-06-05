@@ -107,6 +107,19 @@ def presidio_elements(analyzer, text, score_threshold=0.4):
     return found
 
 
+def presidio_spans(analyzer, text, score_threshold=0.4):
+    """Like presidio_elements but keeps char offsets: list of (girp_label, start, end, score).
+
+    Used by the evaluator for span-level metrics; production uses presidio_elements (set) for speed.
+    """
+    out = []
+    for x in analyzer.analyze(text, language="en", score_threshold=score_threshold):
+        g = PRESIDIO2GIRP.get(x.entity_type)
+        if g:
+            out.append((g, x.start, x.end, float(x.score)))
+    return out
+
+
 def detect_and_classify_hybrid(model, analyzer, text, threshold: float = 0.7, validate: bool = True) -> dict:
     """Detect with gliner2 (fuzzy) + Presidio (structured) and classify per GIRP."""
     merged = {}

@@ -130,10 +130,121 @@ def _highly(r):
 _BUILDERS = [_public, _private, _confidential, _highly]
 
 
-def generate_synthetic_dataset(n: int = 200, seed: int = 0):
-    """Return a DataFrame[text, expected] of n synthetic rows across all tiers (shuffled)."""
-    import pandas as pd
+# ---------------------------------------------------------------------------
+# Span-labelled generation (additive). Used to build the Australian-specific gold
+# slice for the recursive-improvement loop, where public PII datasets have no AU
+# coverage (TFN, Medicare, BSB, +61). Each builder assembles text from labelled
+# fragments so every PII value carries exact char offsets. The original
+# (text, expected) path above is left byte-for-byte unchanged.
+# ---------------------------------------------------------------------------
+def _assemble(fragments):
+    """fragments: list of (string, label_or_None) -> (text, [(label, start, end), ...])."""
+    parts, spans, pos = [], [], 0
+    for s, label in fragments:
+        if label is not None:
+            spans.append((label, pos, pos + len(s)))
+        parts.append(s)
+        pos += len(s)
+    return "".join(parts), spans
+
+
+def _au_street(r):
+    return f"{r.randint(1, 200)} {r.choice(STREETS)}"
+
+
+def _licence(r):
+    """AU-style driver's licence: a letter + digits (validated on digit count, not format)."""
+    return f"{r.choice('ABCDEFGH')}{r.randint(100000, 9999999)}"
+
+
+def _sp_public(r):
+    text, spans = _assemble([(r.choice([
+        "The quarterly report shows strong growth this year.",
+        "Our office will be closed for the public holiday.",
+        "The team meeting is scheduled for Tuesday morning.",
+        f"Order {r.randint(10000, 99999)} has shipped from the warehouse.",
+        f"Invoice {r.randint(1000, 9999)} was approved by finance.",
+        "Reminder: submit your timesheet by Friday.",
+    ]), None)])
+    return text, spans, "Public"
+
+
+def _sp_private(r):
+    k = r.randint(0, 3)
+    if k == 0:
+        frags = [("You can reach me on ", None), (_phone(r), "phone number"), (" any time.", None)]
+    elif k == 1:
+        frags = [("Mailing address: ", None), (_au_street(r), "address"),
+                 (f", {r.choice(CITIES)}.", None)]
+    elif k == 2:
+        frags = [("My email is ", None), (f"{r.choice(FIRST).lower()}@example.com", "email address"),
+                 (" for enquiries.", None)]
+    else:
+        frags = [("Bank account number ", None),
+                 (f"{r.randint(10000000, 99999999)}", "bank account number"), (".", None)]
+    text, spans = _assemble(frags)
+    return text, spans, "Private"
+
+
+def _sp_confidential(r):
+    k = r.randint(0, 7)
+    if k == 0:
+        frags = [("Please contact ", None), (_name(r), "person"), (" on ", None),
+                 (_phone(r), "phone number"), (" about the order.", None)]
+    elif k == 1:
+        frags = [(_name(r), "person"), (" lives at ", None), (_au_street(r), "address"),
+                 (f", {r.choice(CITIES)}.", None)]
+    elif k == 2:
+        frags = [("Payment card ", None), (_card(r), "credit card number"), (" was charged today.", None)]
+    elif k == 3:
+        frags = [("Applicant tax file number ", None), (_tfn(r), "tax file number"), (" is on file.", None)]
+    elif k == 4:
+        frags = [("Passport number ", None), (_passport(r), "passport number"),
+                 (" was sighted at the branch.", None)]
+    elif k == 5:
+        frags = [("Medicare number ", None), (_medicare(r), "medicare number"), (" provided at intake.", None)]
+    elif k == 6:
+        frags = [(_name(r), "person"), (" was born on ", None), (_dob(r), "date of birth"), (".", None)]
+    else:
+        frags = [("Driver licence ", None), (_licence(r), "driver's licence number"), (" recorded.", None)]
+    text, spans = _assemble(frags)
+    return text, spans, "Confidential"
+
+
+def _sp_highly(r):
+    k = r.randint(0, 2)
+    if k == 0:
+        frags = [("Patient ", None), (_name(r), "person"), (", phone ", None), (_phone(r), "phone number"),
+                 (", is being treated for ", None), (r.choice(CONDITIONS), "health condition"), (".", None)]
+    elif k == 1:
+        frags = [(_name(r), "person"), (" at ", None), (_au_street(r), "address"),
+                 (" was diagnosed with ", None), (r.choice(CONDITIONS), "health condition"), (".", None)]
+    else:
+        frags = [("Medical note: ", None), (_name(r), "person"), (", TFN ", None), (_tfn(r), "tax file number"),
+                 (", has ", None), (r.choice(CONDITIONS), "health condition"), (".", None)]
+    text, spans = _assemble(frags)
+    return text, spans, "Highly Confidential"
+
+
+_SPAN_BUILDERS = [_sp_public, _sp_private, _sp_confidential, _sp_highly]
+
+
+def generate_synthetic_dataset(n: int = 200, seed: int = 0, return_spans: bool = False):
+    """Return n synthetic rows across all tiers (shuffled), deterministic for a given seed.
+
+    Default: a DataFrame[text, expected] (unchanged behaviour). With ``return_spans=True``,
+    returns a list of dicts ``{"text", "expected", "spans": [(label, start, end), ...]}`` where
+    every PII value carries exact char offsets — the Australian-specific gold slice for the loop.
+    """
     r = random.Random(seed)
+    if return_spans:
+        rows = []
+        for i in range(n):
+            text, spans, level = _SPAN_BUILDERS[i % len(_SPAN_BUILDERS)](r)
+            rows.append({"text": text, "expected": level, "spans": spans})
+        r.shuffle(rows)
+        return rows
+    import pandas as pd
     rows = []
     for i in range(n):
         text, level = _BUILDERS[i % len(_BUILDERS)](r)

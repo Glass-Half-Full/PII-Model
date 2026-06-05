@@ -138,7 +138,7 @@ def test_robust_batch_extract_recovers_from_oom():
             self.calls = 0
             self.on_cpu = False
 
-        def batch_extract_entities(self, texts, labels, batch_size, threshold):
+        def batch_extract_entities(self, texts, labels, batch_size, threshold, **kwargs):
             self.calls += 1
             if batch_size > 1:                      # simulate OOM until batch_size drops to 1
                 raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")

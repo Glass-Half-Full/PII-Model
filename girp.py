@@ -356,8 +356,12 @@ class _SimpleBar:
         print(f"{self.desc}: done ({self.n}/{self.total})", flush=True)
 
 
-def _robust_batch_extract(model, texts, labels, threshold, batch_size, progress, desc):
-    """batch_extract_entities with adaptive batch size on OOM and CPU fallback as last resort."""
+def _robust_batch_extract(model, texts, labels, threshold, batch_size, progress, desc, **kwargs):
+    """batch_extract_entities with adaptive batch size on OOM and CPU fallback as last resort.
+
+    Extra keyword args (e.g. include_spans, include_confidence) are forwarded to the model so
+    evaluation can request char offsets / confidence scores without a second code path.
+    """
     results = []
     bs = max(1, int(batch_size))
     bar = _make_bar(len(texts), progress, desc)
@@ -366,7 +370,8 @@ def _robust_batch_extract(model, texts, labels, threshold, batch_size, progress,
         while i < len(texts):
             chunk = texts[i:i + bs]
             try:
-                res = model.batch_extract_entities(chunk, labels, batch_size=bs, threshold=threshold)
+                res = model.batch_extract_entities(chunk, labels, batch_size=bs, threshold=threshold,
+                                                   **kwargs)
             except Exception as e:
                 if _is_oom(e):
                     _empty_cache()

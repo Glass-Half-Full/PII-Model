@@ -3,3 +3,13 @@
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
+
+# Recursive-improvement loop artifacts (downloaded corpora + per-iteration outputs).
+# Derivative PII data is never committed; only manifests/ledgers (manifest.json,
+# models.lock, CHANGELOG_MODEL.md, METRICS.md) are tracked.
+data/
+reports/
+errors/
+reviews/
+loop_state.json
+model-finetuned/
