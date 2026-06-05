@@ -56,11 +56,24 @@ PRESIDIO2GIRP = {
 PRESIDIO_BUSINESS = {"AU_ABN": "abn", "AU_ACN": "acn"}
 
 
-def build_analyzer():
-    """Build a Presidio analyzer with the default + Australian recognizers + a custom BSB recognizer."""
+def build_analyzer(spacy_model: str = "en_core_web_sm"):
+    """Build a Presidio analyzer (default + Australian recognizers + custom BSB) on a lightweight
+    spaCy model. The hybrid uses Presidio's pattern/checksum recognizers (regex/Luhn/context), not
+    its spaCy NER (gliner2 does NER), so `en_core_web_sm` (~12 MB) is enough and keeps the footprint
+    small for offline / RTX 2050 use. Falls back to Presidio's default model if the named one is absent.
+    """
     from presidio_analyzer import AnalyzerEngine, RecognizerRegistry, PatternRecognizer, Pattern
+    from presidio_analyzer.nlp_engine import NlpEngineProvider
     from presidio_analyzer.predefined_recognizers import (
         AuTfnRecognizer, AuMedicareRecognizer, AuAbnRecognizer, AuAcnRecognizer)
+    nlp_engine = None
+    try:
+        nlp_engine = NlpEngineProvider(nlp_configuration={
+            "nlp_engine_name": "spacy",
+            "models": [{"lang_code": "en", "model_name": spacy_model}],
+        }).create_engine()
+    except Exception as e:
+        print(f"[aupii] spaCy model {spacy_model!r} unavailable ({e}); using Presidio default.")
     reg = RecognizerRegistry()
     reg.load_predefined_recognizers()
     for rec in (AuTfnRecognizer(), AuMedicareRecognizer(), AuAbnRecognizer(), AuAcnRecognizer()):
@@ -72,7 +85,7 @@ def build_analyzer():
         context=["bsb", "branch", "bank", "account"],
     )
     reg.add_recognizer(bsb)
-    return AnalyzerEngine(registry=reg)
+    return AnalyzerEngine(registry=reg, nlp_engine=nlp_engine) if nlp_engine else AnalyzerEngine(registry=reg)
 
 
 def presidio_elements(analyzer, text, score_threshold=0.4):
