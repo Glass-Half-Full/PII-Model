@@ -3,7 +3,7 @@
 Run directly (no pytest needed):   python test_girp.py
 Or under pytest:                    pytest test_girp.py
 """
-from girp import classify_elements, explain, found_labels, LEVELS, RANK
+from girp import classify_elements, explain, found_labels, is_valid_entity, LEVELS, RANK
 
 # (detected element labels, expected GIRP level, which GIRP rule this checks)
 CASES = [
@@ -71,15 +71,77 @@ def test_person_stopwords_filtered():
     # Pronouns mis-tagged as a person must be dropped (not real identifiers).
     assert found_labels({"person": ["me"], "phone number": ["+61 400 000 111"]}) == {"phone number"}
     assert found_labels({"person": ["me"]}) == set()
-    assert found_labels({"person": ["John Smith"], "phone number": ["x"]}) == {"person", "phone number"}
+    assert found_labels({"person": ["John Smith"], "phone number": ["0412 345 678"]}) == {"person", "phone number"}
     assert found_labels({"person": [], "email address": ["a@b.com"]}) == {"email address"}
 
 
 def test_stopword_yields_correct_girp():
     # "call me on <phone>" -> phone in isolation -> Private (not Confidential).
-    assert classify_elements(found_labels({"person": ["me"], "phone number": ["x"]})) == "Private"
+    assert classify_elements(found_labels({"person": ["me"], "phone number": ["0412 345 678"]})) == "Private"
     # A real name + phone is still Confidential.
-    assert classify_elements(found_labels({"person": ["Jane Roe"], "phone number": ["x"]})) == "Confidential"
+    assert classify_elements(found_labels({"person": ["Jane Roe"], "phone number": ["0412 345 678"]})) == "Confidential"
+
+
+def test_format_validation_removes_false_positives():
+    # 'office' is not an address (no number, no street word) -> dropped.
+    assert found_labels({"address": ["office"]}) == set()
+    assert found_labels({"address": ["12 King Street"]}) == {"address"}   # has a number
+    assert found_labels({"address": ["King Street"]}) == {"address"}      # street word
+    # stray numbers are not cards / TFNs of the right size.
+    assert found_labels({"credit card number": ["order 12345"]}) == set()
+    assert found_labels({"credit card number": ["4111 1111 1111 1111"]}) == {"credit card number"}
+    assert found_labels({"tax file number": ["unit 12"]}) == set()
+    assert found_labels({"tax file number": ["123 456 789"]}) == {"tax file number"}
+    # email/phone need the right shape.
+    assert found_labels({"email address": ["contact us"]}) == set()
+    assert found_labels({"email address": ["a@b.com"]}) == {"email address"}
+    assert found_labels({"phone number": ["call the desk"]}) == set()
+    assert found_labels({"phone number": ["02 9000 0000"]}) == {"phone number"}
+
+
+def test_is_valid_entity_direct():
+    assert is_valid_entity("credit card number", "4111 1111 1111 1111")
+    assert not is_valid_entity("credit card number", "order 12345")
+    assert is_valid_entity("address", "10 Oak Avenue")
+    assert not is_valid_entity("address", "the office")
+    assert is_valid_entity("person", "Jane Roe")
+    assert not is_valid_entity("person", "me")
+    assert is_valid_entity("email address", "x@y.org")
+    assert not is_valid_entity("email address", "no at sign")
+
+
+def test_regex_backstop():
+    from girp import regex_elements
+    # Luhn-valid card is caught even if the model misses it; a non-Luhn number is not.
+    assert "credit card number" in regex_elements("paid with 4111 1111 1111 1111 today")
+    assert "credit card number" not in regex_elements("ref 4111 1111 1111 1112")
+    assert "email address" in regex_elements("write to a.b@example.com please")
+    assert "phone number" in regex_elements("call +61 434 649 757 to confirm")
+    assert regex_elements("order number 12345 shipped Tuesday") == set()
+
+
+def test_robust_batch_extract_recovers_from_oom():
+    # Adaptive batch sizing must recover from a CUDA OOM without a real GPU.
+    from girp import _robust_batch_extract
+
+    class FakeModel:
+        def __init__(self):
+            self.calls = 0
+            self.on_cpu = False
+
+        def batch_extract_entities(self, texts, labels, batch_size, threshold):
+            self.calls += 1
+            if batch_size > 1:                      # simulate OOM until batch_size drops to 1
+                raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+            return [{"entities": {}} for _ in texts]
+
+        def to(self, device):
+            self.on_cpu = (device == "cpu")
+
+    m = FakeModel()
+    res = _robust_batch_extract(m, ["a", "b", "c"], ["person"], 0.5, 8, progress=False, desc="t")
+    assert len(res) == 3            # all rows processed despite OOM
+    assert m.calls >= 2            # it retried with smaller batches
 
 
 def _run():
@@ -95,7 +157,12 @@ def _run():
     test_explain_reports_level_and_reasons()
     test_person_stopwords_filtered()
     test_stopword_yields_correct_girp()
-    print(f"\nGIRP rule alignment: {passed}/{len(CASES)} cases passed; ordering + explain() + filtering OK.")
+    test_format_validation_removes_false_positives()
+    test_is_valid_entity_direct()
+    test_regex_backstop()
+    test_robust_batch_extract_recovers_from_oom()
+    print(f"\nGIRP rule alignment: {passed}/{len(CASES)} cases passed; ordering + explain() + "
+          "validation + OOM-recovery OK.")
     if passed != len(CASES):
         raise SystemExit(1)
     print("All GIRP tests passed.")
