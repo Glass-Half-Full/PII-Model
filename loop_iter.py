@@ -65,36 +65,33 @@ def extract_errors(eval_dir, out_path, cap=80):
 
 
 def accumulate(errors_path, iter_n, hard_path="data/hard_examples.jsonl"):
-    """Route reviewed errors to the Stage-2 pool: detection gaps -> positive training examples,
-    false positives -> hard negatives. Idempotent by (id, reason)."""
+    """Route reviewed errors to the Stage-2 training pool. Each hard row stores the FULL gold spans
+    (the correct training target): for a detection gap this teaches the missed entity; for a false
+    positive the gold (which omits the spurious label) teaches suppression. One row per text,
+    idempotent by id. A Public row legitimately has spans=[] (a no-entity hard negative)."""
     mm = [json.loads(l) for l in open(errors_path) if l.strip()]
     os.makedirs(os.path.dirname(hard_path), exist_ok=True)
     seen = set()
     if os.path.exists(hard_path):
         for line in open(hard_path):
             if line.strip():
-                r = json.loads(line)
-                seen.add((r.get("id"), r.get("reason")))
-    pos = neg = 0
+                seen.add(json.loads(line).get("id"))
+    gaps = negs = 0
     with open(hard_path, "a") as f:
         for e in mm:
-            gap = set(e["probe"]["detection_gap"])
-            if gap and (e["id"], "detection_gap") not in seen:
-                spans = [{"label": l, "start": s, "end": en}
-                         for (l, s, en) in e["gold"]["spans"] if l in gap]
-                if spans:
-                    f.write(json.dumps({"id": e["id"], "text": e["text"], "spans": spans,
-                                        "source": e["source"], "iter": iter_n,
-                                        "reason": "detection_gap"}, ensure_ascii=False) + "\n")
-                    pos += 1
-            spur = e["probe"]["spurious_elements"]
-            if spur and (e["id"], "false_positive") not in seen:
-                f.write(json.dumps({"id": e["id"], "text": e["text"], "spans": [], "negative": True,
-                                    "spurious": spur, "source": e["source"], "iter": iter_n,
-                                    "reason": "false_positive"}, ensure_ascii=False) + "\n")
-                neg += 1
-    print(f"accumulated -> {hard_path}: {pos} detection-gap positives, {neg} hard negatives "
-          f"(pool now {len(seen)+pos+neg} rows)")
+            gap, spur = e["probe"]["detection_gap"], e["probe"]["spurious_elements"]
+            if not (gap or spur) or e["id"] in seen:
+                continue
+            seen.add(e["id"])
+            reasons = (["detection_gap"] if gap else []) + (["false_positive"] if spur else [])
+            spans = [{"label": l, "start": s, "end": en} for (l, s, en) in e["gold"]["spans"]]
+            f.write(json.dumps({"id": e["id"], "text": e["text"], "spans": spans,
+                                "source": e["source"], "iter": iter_n, "reasons": reasons,
+                                "gold_level": e["gold"]["level"]}, ensure_ascii=False) + "\n")
+            gaps += bool(gap)
+            negs += bool(spur)
+    print(f"accumulated -> {hard_path}: +{gaps} detection-gap, +{negs} false-positive rows "
+          f"(pool now {len(seen)} unique texts)")
 
 
 def decide(before_dir, after_dir, min_delta=0.0, under_tol=0.01):

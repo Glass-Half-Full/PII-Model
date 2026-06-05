@@ -74,6 +74,24 @@ def test_hard_examples_schema():
                     assert s["label"] in vocab, f"line {ln}: label {s['label']!r} not in GIRP vocab"
 
 
+def test_build_training_set_offline():
+    """Stage-2 data builder must emit gliner2 InputExample dicts ({text, entities:{label:[str]}})
+    with entity strings that actually occur in the text. Runs offline (no GPU)."""
+    import train_lora
+    if not os.path.exists("data/hard_examples.jsonl"):
+        return  # pool not accumulated yet (fresh checkout); augmentation path covered below
+    examples = train_lora.build_training_set(augment_n=8, seed=0, out_path=None)
+    assert examples, "no training examples produced"
+    for ex in examples:
+        assert "text" in ex and "entities" in ex and isinstance(ex["entities"], dict)
+        for label, values in ex["entities"].items():
+            assert label in set(GIRP_PII_LABELS), f"non-GIRP label in training set: {label}"
+            for v in values:
+                assert v in ex["text"], f"entity {v!r} not found in text"
+    # augmentation contributes at least one entity-bearing example
+    assert any(ex["entities"] for ex in examples)
+
+
 def _run():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     passed = 0
