@@ -82,6 +82,11 @@ python test_girp.py
 ```
 Checks the GIRP rules (deterministic, no model needed).
 
+## Performance baseline
+See [`BASELINE.md`](BASELINE.md) for measured precision/recall/F1 on a public labeled PII dataset —
+email F1 100%, phone/name/address ~80%+, micro-avg F1 ~78%. The main error mode is *over*-classification
+on PII-dense text (tunable via `threshold`). Reproduce with `python benchmark.py` (needs internet).
+
 ## Files
 | File | Purpose |
 |---|---|
@@ -89,6 +94,7 @@ Checks the GIRP rules (deterministic, no model needed).
 | `girp.py` | GIRP rules + format validation + regex/Luhn backstop + OOM-safe local loader + DataFrame helpers |
 | `test_girp.py` | GIRP rule, validation, regex & OOM-recovery tests |
 | `synthetic.py` | Synthetic data generator for validation (all tiers + false-positive bait) |
+| `benchmark.py`, `BASELINE.md` | Performance baseline on a public labeled PII set (`benchmark.py` needs internet) |
 | `requirements.txt`, `setup.bat`, `setup.sh` | Dependency install (no venv/conda) |
 | `model.safetensors`, `config.json`, `tokenizer*.json`, `added_tokens.json`, `special_tokens_map.json`, `encoder_config/` | The local model + tokenizer + config |
 

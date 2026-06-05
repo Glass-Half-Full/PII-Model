@@ -79,6 +79,35 @@ PERSON_STOPWORDS = {
     "team", "staff", "manager", "office", "everybody", "nobody",
 }
 
+# Common nouns / roles / gender terms the zero-shot model often mis-tags as a person name.
+_PERSON_NONNAME = {
+    "student", "students", "child", "children", "parent", "parents", "family", "spouse",
+    "partner", "guardian", "minor", "adult", "adults", "baby", "kid", "kids", "boy", "girl",
+    "male", "female", "man", "woman", "men", "women", "person", "people", "individual",
+    "trans male", "trans female", "transgender", "transgender person", "nonbinary", "non-binary",
+    "employee", "employer", "member", "members", "user", "users", "senior", "citizen",
+    "teacher", "teachers", "facilitator", "investor", "supervisor", "coordinator", "director",
+}
+# Job-title / role words: if a detected "person" contains one, it's a title, not a name.
+_ROLE_WORDS = {
+    "coordinator", "supervisor", "manager", "director", "officer", "analyst", "engineer",
+    "specialist", "administrator", "assistant", "executive", "consultant", "technician",
+    "operator", "representative", "agent", "advisor", "clerk", "intern", "trainee", "program",
+    "group", "department", "teacher", "student", "facilitator", "investor", "developer",
+    "designer", "planner", "auditor", "lead", "head", "chief", "officer", "associate",
+}
+
+
+def _is_personish(value: str) -> bool:
+    """True if a detected 'person' span looks like an actual name, not a noun/role/gender term."""
+    s = value.strip().lower()
+    if s in PERSON_STOPWORDS or s in _PERSON_NONNAME or value.strip().isdigit():
+        return False
+    tokens = s.replace("-", " ").split()
+    if any(t in _ROLE_WORDS for t in tokens):   # job titles like "Investor Program Supervisor"
+        return False
+    return True
+
 # ---------------------------------------------------------------------------
 # Format validation — removes zero-shot false positives before they count.
 # ---------------------------------------------------------------------------
@@ -149,33 +178,45 @@ def is_valid_entity(label: str, value: str) -> bool:
     if len(v) < 2:
         return False
     d = _ndigits(v)
+    alpha = any(c.isalpha() for c in v)
     if label == "person":
-        return v.lower() not in PERSON_STOPWORDS and not v.isdigit()
+        return _is_personish(v)
     if label == "email address":
         return "@" in v and "." in v.rsplit("@", 1)[-1]
     if label == "phone number":
-        return d >= 7
+        # phones: no letters (excludes crypto/hex), no ':' or ',' (IPv6/MAC/coords),
+        # 7-14 digits (excludes 15-digit IMEIs and 16-digit account/card numbers), and not an IPv4.
+        if alpha or ":" in v or "," in v:
+            return False
+        if re.match(r"^\s*\d{1,3}(\.\d{1,3}){3}\s*$", v):   # IPv4 dotted quad
+            return False
+        return 7 <= d <= 14
     if label == "credit card number":
-        return 13 <= d <= 19
+        # 13-19 digits, no letters. (Luhn is applied in the regex backstop for real cards;
+        # not here, because many synthetic datasets use non-Luhn card numbers.)
+        return (not alpha) and 13 <= d <= 19
     if label == "tax file number":
-        return 8 <= d <= 9
+        return (not alpha) and 8 <= d <= 9
     if label == "medicare number":
-        return 10 <= d <= 11
+        return (not alpha) and 10 <= d <= 11
     if label == "passport number":
-        return 6 <= len(v.replace(" ", "")) <= 10 and d >= 1 and any(c.isalpha() for c in v)
+        return 6 <= len(v.replace(" ", "")) <= 10 and d >= 1 and alpha
     if label == "driver's licence number":
-        return d >= 4
+        return 4 <= d <= 12 and ":" not in v
     if label == "bank account number":
-        return d >= 5
+        return 6 <= d <= 18 and len(v) <= 34 and ":" not in v and "." not in v
     if label == "date of birth":
-        return d >= 3
+        return 3 <= d <= 8 and ":" not in v
     if label == "address":
-        return bool(_HAS_DIGIT.search(v)) or bool(_STREET_RE.search(v))
+        if _STREET_RE.search(v):
+            return True
+        # otherwise require a multi-word string with a number and real words
+        # (rejects GPS coords, IPs, zipcodes, and crypto/hex blobs).
+        return (" " in v) and bool(_HAS_DIGIT.search(v)) and bool(re.search(r"[A-Za-z]{3,}", v)) \
+            and ":" not in v
     if label in SENSITIVE_LABELS:
-        # A health condition is words, not a phone/number (guards against mis-tagged digits).
-        return any(c.isalpha() for c in v) and d < 7
-    # birthplace, mother's maiden name, biometric, signature:
-    # no reliable format check -> accept (still must be >= 2 chars, handled above).
+        return alpha and d < 7                        # a condition is words, not a number
+    # birthplace, mother's maiden name, biometric, signature: accept (>= 2 chars, handled above).
     return True
 
 
