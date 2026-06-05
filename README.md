@@ -95,13 +95,15 @@ on PII-dense text (tunable via `threshold`). Reproduce with `python benchmark.py
 | `test_girp.py` | GIRP rule, validation, regex & OOM-recovery tests |
 | `synthetic.py` | Synthetic data generator for validation (all tiers + false-positive bait) |
 | `benchmark.py`, `BASELINE.md` | Performance baseline on a public labeled PII set (`benchmark.py` needs internet) |
+| `PRODUCTION.md` | Model-comparison findings + production roadmap (fine-tuning, calibration, monitoring) |
 | `requirements.txt`, `setup.bat`, `setup.sh` | Dependency install (no venv/conda) |
 | `model.safetensors`, `config.json`, `tokenizer*.json`, `added_tokens.json`, `special_tokens_map.json`, `encoder_config/` | The local model + tokenizer + config |
 
 ## Notes
 - **Offline:** loads with `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`. Copy this folder to an air-gapped machine and it runs unchanged.
 - **Device:** automatic CUDA → CPU. On CUDA it uses fp16 (~0.4 GB VRAM — fits a 4 GB card). If you hit out-of-memory, lower `batch_size`.
-- **Tuning:** `threshold` (default `0.5`) and the GIRP element label sets in `girp.py` are editable (zero-shot — any natural-language label works).
+- **Tuning:** `threshold` (default `0.7` — best precision/recall balance; use `0.5` for max recall, `0.85+` for fewest false flags) and the GIRP element label sets in `girp.py` are editable.
+- **Improving further:** see [`PRODUCTION.md`](PRODUCTION.md) — a bigger model gives ~0% gain for 3× cost; the real lever is fine-tuning on labeled domain data.
 - **Robust:** format validation removes false positives (a "card" needs 13–19 digits, an "address" a number/street word, pronouns aren't names); a Luhn-checked regex backstop catches structured PII the model misses (cards, emails, international phones); CUDA out-of-memory self-recovers (batch halving → CPU fallback). Validated on synthetic data across all four tiers (`synthetic.py`).
 
 ---

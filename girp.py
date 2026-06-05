@@ -288,7 +288,7 @@ def explain(labels) -> dict:
     return {"level": level, "rank": RANK[level], "elements": sorted(labels), "reasons": reasons}
 
 
-def detect_and_classify(model, text, threshold: float = 0.5, validate: bool = True) -> dict:
+def detect_and_classify(model, text, threshold: float = 0.7, validate: bool = True) -> dict:
     """Detect elements in `text` (grouped passes), then classify."""
     merged = {}
     for labels in DETECTION_GROUPS:
@@ -413,7 +413,7 @@ def _auto_batch_size(model) -> int:
     return 16
 
 
-def classify_columns(model, df, columns, threshold: float = 0.5, batch_size: int = None,
+def classify_columns(model, df, columns, threshold: float = 0.7, batch_size: int = None,
                      validate: bool = True, progress: bool = True, max_chars: int = None):
     """Classify one or more text columns of a DataFrame against the GIRP scheme.
 
@@ -452,7 +452,7 @@ def classify_columns(model, df, columns, threshold: float = 0.5, batch_size: int
     return out
 
 
-def classify_dataframe_girp(model, df, text_col, threshold: float = 0.5, batch_size: int = None,
+def classify_dataframe_girp(model, df, text_col, threshold: float = 0.7, batch_size: int = None,
                             validate: bool = True, progress: bool = True):
     """Single-column helper: adds `girp_level` and `girp_elements`."""
     res = classify_columns(model, df, [text_col], threshold=threshold, batch_size=batch_size,
