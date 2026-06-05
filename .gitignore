@@ -1,0 +1,5 @@
+# Local Python / Jupyter scratch (added for the PII notebook)
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
