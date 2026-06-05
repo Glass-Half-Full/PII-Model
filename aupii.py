@@ -16,6 +16,7 @@ false positives that drove over-classification.
 """
 from __future__ import annotations
 
+import os
 import re
 
 from girp import (classify_elements, explain, found_labels, RANK, LEVELS,
@@ -35,12 +36,15 @@ def _regex_phone(text: str) -> set:
 
 # The ML model detects fuzzy/contextual elements in two focused passes (a separate health pass
 # keeps recall high for the top tier). Email is handled by Presidio (100% precision), not here.
+# Each group is (labels, threshold_override). The health group runs at a LOWER threshold because
+# it drives the top tier (Highly Confidential) — we want high recall there even at some extra
+# health false positives (which only over-classify in the safe direction).
 GLINER_FUZZY_GROUPS = [
-    ["person", "phone number", "date of birth", "address", "birthplace", "mother's maiden name",
-     "passport number", "driver's licence number"],   # zero-shot handles AU formats Presidio's US recognizers miss
-    ["medical condition", "health condition", "illness"],
+    (["person", "phone number", "date of birth", "address", "birthplace", "mother's maiden name",
+      "passport number", "driver's licence number"], None),   # zero-shot handles AU formats Presidio misses
+    (["medical condition", "health condition", "illness"], 0.4),
 ]
-GLINER_FUZZY_LABELS = [l for g in GLINER_FUZZY_GROUPS for l in g]
+GLINER_FUZZY_LABELS = [l for labs, _ in GLINER_FUZZY_GROUPS for l in labs]
 
 # Presidio entity -> GIRP element. Structured / high-precision items (checksum or regex validated).
 PRESIDIO2GIRP = {
@@ -101,8 +105,9 @@ def presidio_elements(analyzer, text, score_threshold=0.4):
 def detect_and_classify_hybrid(model, analyzer, text, threshold: float = 0.7, validate: bool = True) -> dict:
     """Detect with gliner2 (fuzzy) + Presidio (structured) and classify per GIRP."""
     merged = {}
-    for labs in GLINER_FUZZY_GROUPS:
-        for l, v in model.extract_entities(text, labs, threshold=threshold)["entities"].items():
+    for labs, thr_override in GLINER_FUZZY_GROUPS:
+        thr = thr_override if thr_override is not None else threshold
+        for l, v in model.extract_entities(text, labs, threshold=thr)["entities"].items():
             if v:
                 merged.setdefault(l, []).extend(v)
     fuzzy = found_labels(merged, validate=validate)
@@ -132,8 +137,9 @@ def classify_columns_hybrid(model, analyzer, df, columns, threshold: float = 0.7
     for col in columns:
         texts = out[col].fillna("").astype(str).tolist()
         merged = [dict() for _ in texts]
-        for gi, labs in enumerate(GLINER_FUZZY_GROUPS, 1):
-            gres = _robust_batch_extract(model, texts, labs, threshold, bs, progress,
+        for gi, (labs, thr_override) in enumerate(GLINER_FUZZY_GROUPS, 1):
+            thr = thr_override if thr_override is not None else threshold
+            gres = _robust_batch_extract(model, texts, labs, thr, bs, progress,
                                          f"hybrid {col} [pass {gi}/{len(GLINER_FUZZY_GROUPS)}]")
             for i, r in enumerate(gres):
                 for l, v in r["entities"].items():
@@ -192,10 +198,33 @@ class GlinerV1Adapter:
         return self
 
 
-def load_gliner_pii(model_name: str = "knowledgator/gliner-pii-small-v1.0", device: str = None):
-    """Load a PII-specialized original-GLiNER model, wrapped for the hybrid interface."""
+def load_gliner_pii(model: str = "knowledgator/gliner-pii-small-v1.0", device: str = None,
+                    revision: str = None, offline: bool = True):
+    """Load a PII-specialized original-GLiNER model (wrapped for the hybrid) — LOCAL-ONLY by default.
+
+    `model` may be a local directory OR a Hugging Face id that is already cached. With offline=True
+    (default) no network is used: the Hub is disabled via env vars. To fetch it the first time, run
+    once on a networked machine (`GLiNER.from_pretrained("knowledgator/gliner-pii-small-v1.0")`) or
+    vendor the model directory and pass its path. Pin `revision=` for reproducibility.
+    """
+    if offline:
+        os.environ.setdefault("HF_HUB_OFFLINE", "1")
+        os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+        os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
     from gliner import GLiNER
-    m = GLiNER.from_pretrained(model_name)
+    rev = {"revision": revision} if revision else {}
+    try:
+        try:
+            m = GLiNER.from_pretrained(model, local_files_only=True, **rev)
+        except TypeError:          # older gliner without the kwarg; offline env still enforces local-only
+            m = GLiNER.from_pretrained(model, **rev)
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not load {model!r} from local files ({type(e).__name__}: {e}). "
+            "Provide a local model directory, or pre-download it once on a networked machine "
+            f"(GLiNER.from_pretrained({model!r})) so it is cached; for air-gapped use, vendor the "
+            "directory and pass its path. Set offline=False only to allow a one-time Hub fetch."
+        ) from e
     if device:
         m = m.to(device)
     return GlinerV1Adapter(m)

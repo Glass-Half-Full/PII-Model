@@ -104,11 +104,16 @@ The Australian hybrid was run over a **10,000-row** dataset with networking disa
 this repository (`girp.py`) and cover the personal-information rules that can be derived from text.
 Document-type rules (board papers, audit reports, etc.) need document-level context and are out of scope.
 
-## Validate
+## Validate & quality gates (CI-ready)
 ```
-python test_girp.py
+python test_girp.py        # deterministic GIRP rules (no deps)
+python test_failures.py    # failure-mode bait: numeric IDs, titles/pronouns, empty/long, health combos
+python test_aupii.py       # hybrid tier (skips cleanly without the extras)
+python eval_gate.py        # labeled-holdout gate: accuracy / under-classification / health-miss bars; non-zero on regression
+python selfcheck.py        # loads + classifies with networking disabled — proves no external API calls
 ```
-Checks the GIRP rules (deterministic, no model needed).
+`eval_gate.py` defaults to a reproducible synthetic holdout; point `--holdout your.jsonl` at your data
+for a production release gate.
 
 ## Performance baseline
 See [`BASELINE.md`](BASELINE.md) for measured precision/recall/F1 on a public labeled PII dataset —
@@ -126,6 +131,8 @@ on PII-dense text (tunable via `threshold`). Reproduce with `python benchmark.py
 | `PRODUCTION.md` | Model-comparison findings + production roadmap (fine-tuning, calibration, monitoring) |
 | `aupii.py`, `test_aupii.py`, `AUPII.md` | **Australian-ready hybrid** (gliner2 + Presidio checksums + AU TFN/Medicare/ABN/ACN/BSB) |
 | `requirements-hybrid.txt` | Extra deps for the hybrid (Presidio, spaCy, gliner) |
+| `eval_gate.py`, `selfcheck.py`, `test_failures.py` | Release eval gate, offline self-check, failure-mode regression suite |
+| `weak_label.py`, `train_lora.py` | Recursive enhancement: weak-label/review data engine + LoRA fine-tune scaffold |
 | `requirements.txt`, `setup.bat`, `setup.sh` | Dependency install (no venv/conda) |
 | `model.safetensors`, `config.json`, `tokenizer*.json`, `added_tokens.json`, `special_tokens_map.json`, `encoder_config/` | The local model + tokenizer + config |
 

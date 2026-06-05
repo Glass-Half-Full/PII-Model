@@ -43,6 +43,15 @@ CASES = [
     # --- Highly Confidential: sensitive info + Confidential customer PII ---
     ({"person", "phone number", "medical condition"}, "Highly Confidential", "sensitive + (name+phone)"),
     ({"person", "address", "medical condition"},      "Highly Confidential", "sensitive + (name+address)"),
+
+    # --- Highly Confidential: sensitive + a Confidential-isolation identifier (no name needed) ---
+    ({"medical condition", "tax file number"},         "Highly Confidential", "health + TFN (gov-id) -> Highly"),
+    ({"medical condition", "medicare number"},         "Highly Confidential", "health + Medicare -> Highly"),
+    ({"medical condition", "credit card number"},      "Highly Confidential", "health + card (PAN) -> Highly"),
+    ({"medical condition", "passport number"},         "Highly Confidential", "health + passport -> Highly"),
+    ({"medical condition", "driver's licence number"}, "Highly Confidential", "health + licence -> Highly"),
+    # bank account is Private-in-isolation (not Confidential), so it does NOT escalate to Highly:
+    ({"medical condition", "bank account number"},     "Confidential", "health + bank acct (Private-iso) -> Confidential"),
 ]
 
 

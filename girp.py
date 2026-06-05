@@ -104,7 +104,8 @@ def _is_personish(value: str) -> bool:
     if s in PERSON_STOPWORDS or s in _PERSON_NONNAME or value.strip().isdigit():
         return False
     tokens = s.replace("-", " ").split()
-    if any(t in _ROLE_WORDS for t in tokens):   # job titles like "Investor Program Supervisor"
+    junk = PERSON_STOPWORDS | _PERSON_NONNAME | _ROLE_WORDS
+    if any(t in junk for t in tokens):   # generic noun / role / gender token -> not a real name
         return False
     return True
 
@@ -258,10 +259,15 @@ def classify_elements(labels) -> str:
     has_sensitive = bool(labels & SENSITIVE_LABELS)
 
     identifiable_pii = has_name and has_combo
+    # Confidential-level customer PII = an identifiable combination (name + element) OR a
+    # confidential-in-isolation identifier (credit card / TFN / Medicare / passport / licence).
+    confidential_pii = identifiable_pii or has_conf_iso
 
-    if has_sensitive and identifiable_pii:
+    # Highly Confidential = sensitive (health) information together with Confidential-level PII.
+    # NOTE: this includes health + a card/gov-ID even without a name (conservative, compliance-safe).
+    if has_sensitive and confidential_pii:
         return "Highly Confidential"
-    if identifiable_pii or has_conf_iso or has_sensitive:
+    if confidential_pii or has_sensitive:
         return "Confidential"
     if has_private_iso or has_name:
         return "Private"
@@ -280,7 +286,8 @@ def explain(labels) -> dict:
     if labels & SENSITIVE_LABELS:
         reasons.append("sensitive (health) information present")
     if level == "Highly Confidential":
-        reasons.append("sensitive info + Confidential customer PII -> Highly Confidential")
+        reasons.append("sensitive info + Confidential-level PII (name+combination or card/gov-id) "
+                       "-> Highly Confidential")
     if not reasons and (labels & PRIVATE_ISOLATION_LABELS or labels & NAME_LABELS):
         reasons.append("personal element in isolation -> Private")
     if not reasons:

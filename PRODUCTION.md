@@ -3,6 +3,20 @@
 Evidence-based findings from benchmarking on a public labeled PII dataset (see `BASELINE.md`),
 plus a roadmap to a production-grade solution.
 
+## Adversarial review — resolved
+A Codex adversarial review flagged three issues; all are addressed:
+- **[HIGH] Health + Confidential-ID under-classification** — `classify_elements` now escalates to
+  *Highly Confidential* when sensitive info combines with **any** Confidential element (name+combination
+  **or** card/TFN/Medicare/passport/licence). Regression tests added (`test_girp.py`, `test_failures.py`).
+- **[MED] Hybrid tests weren't a gate** — `test_aupii.py` now skips cleanly without the extras; base
+  suite (`test_girp.py`, `test_failures.py`) stays green; deps tiered.
+- **[MED] Offline escape hatch** — `aupii.load_gliner_pii()` is now local/offline by default
+  (`local_files_only`, offline env, revision pin, fail-fast). `selfcheck.py` proves no network is used.
+
+New gates from the review's roadmap: `eval_gate.py` (labeled-holdout release gate with health-miss bar),
+`test_failures.py` (failure-mode bait), `selfcheck.py` (auditable offline), and the recursive
+enhancement tooling `weak_label.py` + `train_lora.py` (Part C below).
+
 ## What we tested (so you don't have to guess)
 
 | Change | Micro-F1 | Speed | GIRP acc / over-class | Verdict |
