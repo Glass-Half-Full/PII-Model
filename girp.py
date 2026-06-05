@@ -85,7 +85,9 @@ _PERSON_NONNAME = {
     "partner", "guardian", "minor", "adult", "adults", "baby", "kid", "kids", "boy", "girl",
     "male", "female", "man", "woman", "men", "women", "person", "people", "individual",
     "trans male", "trans female", "transgender", "transgender person", "nonbinary", "non-binary",
-    "employee", "employer", "member", "members", "user", "users", "senior", "citizen",
+    "employee", "employer", "member", "members", "user", "users", "senior",
+    # NOTE: "citizen" is intentionally NOT here — it is a real surname (the AU placeholder name
+    # "John Citizen"); "senior citizen" stays filtered via "senior". (loop iter-001)
     "teacher", "teachers", "facilitator", "investor", "supervisor", "coordinator", "director",
 }
 # Job-title / role words: if a detected "person" contains one, it's a title, not a name.

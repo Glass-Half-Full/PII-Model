@@ -105,7 +105,7 @@ def derive(gliner_spans, presidio_spans, text, threshold, engine, validate=True)
     Health labels use the fixed HEALTH_THR; all other gliner labels use ``threshold``. The element
     set and level are computed by the SAME production functions used at inference time.
     """
-    from aupii import _regex_phone
+    from aupii import SUPPRESSED_FUZZY_LABELS, _regex_phone
     merged = collections.defaultdict(list)
     kept = []
     for (lbl, s, e, c) in gliner_spans:
@@ -114,14 +114,15 @@ def derive(gliner_spans, presidio_spans, text, threshold, engine, validate=True)
             merged[lbl].append(text[s:e])
             kept.append((lbl, s, e))
     if engine == "hybrid":
-        fuzzy = found_labels(dict(merged), validate=validate) | _regex_phone(text)
+        fuzzy = (found_labels(dict(merged), validate=validate) | _regex_phone(text)) - SUPPRESSED_FUZZY_LABELS
         structured = {g for (g, _, _, _) in presidio_spans}
         elements = fuzzy | structured
     else:
         elements = found_labels(dict(merged), validate=validate) | regex_elements(text)
     level = classify_elements(elements)
+    suppressed = SUPPRESSED_FUZZY_LABELS if engine == "hybrid" else frozenset()
     pred_spans = [(lbl, s, e) for (lbl, s, e) in kept
-                  if (not validate or is_valid_entity(lbl, text[s:e]))]
+                  if lbl not in suppressed and (not validate or is_valid_entity(lbl, text[s:e]))]
     if engine == "hybrid":
         pred_spans += [(g, s, e) for (g, s, e, _sc) in presidio_spans]
     return elements, level, pred_spans

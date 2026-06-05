@@ -46,6 +46,15 @@ GLINER_FUZZY_GROUPS = [
 ]
 GLINER_FUZZY_LABELS = [l for labs, _ in GLINER_FUZZY_GROUPS for l in labs]
 
+# Low-precision zero-shot labels SUPPRESSED from the final element set (loop iter-001). "birthplace"
+# and "mother's maiden name" fire on ordinary place names in real text ("Albuquerque museum",
+# "Saint-Robert-Bellarmin"), driving Public over-classification, with ~0 precision and no gold
+# support. They are kept in the EXTRACTION label set above (removing them perturbs zero-shot person
+# detection — measured -1.7pp balanced accuracy in iter-001) but dropped AFTER extraction, so the
+# decision is unperturbed. They remain in the GIRP rule engine for any future surfacing (Stage-2
+# fine-tuning or a dedicated recognizer). See LOOP.md / CHANGELOG_MODEL.md.
+SUPPRESSED_FUZZY_LABELS = frozenset({"birthplace", "mother's maiden name"})
+
 # Presidio entity -> GIRP element. Structured / high-precision items (checksum or regex validated).
 PRESIDIO2GIRP = {
     "EMAIL_ADDRESS": "email address",
@@ -128,7 +137,7 @@ def detect_and_classify_hybrid(model, analyzer, text, threshold: float = 0.7, va
         for l, v in model.extract_entities(text, labs, threshold=thr)["entities"].items():
             if v:
                 merged.setdefault(l, []).extend(v)
-    fuzzy = found_labels(merged, validate=validate) | _regex_phone(text)   # ML/text side
+    fuzzy = (found_labels(merged, validate=validate) | _regex_phone(text)) - SUPPRESSED_FUZZY_LABELS
     structured = presidio_elements(analyzer, text)                        # checksum/regex side
     found = fuzzy | structured
     out = explain(found)
@@ -168,7 +177,7 @@ def classify_columns_hybrid(model, analyzer, df, columns, threshold: float = 0.7
                         merged[i].setdefault(l, []).extend(v)
         levels, elements, review = [], [], []
         for i, t in enumerate(texts):
-            g = found_labels(merged[i], validate=validate) | _regex_phone(t)   # ML/text side
+            g = (found_labels(merged[i], validate=validate) | _regex_phone(t)) - SUPPRESSED_FUZZY_LABELS
             p = presidio_elements(analyzer, t)                                # checksum/regex side
             found = g | p
             lvl = classify_elements(found)

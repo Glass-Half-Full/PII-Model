@@ -108,7 +108,11 @@ def tag_model(version, stage, headline, gate, parent=None, threshold=0.7, gold_v
     return record
 
 
-def _prepend_changelog(path, record, note):
+_CHANGELOG_HEADER = ("# Model changelog\n\n"
+                     "Balanced GIRP accuracy per tagged version (newest first).\n\n")
+
+
+def _changelog_block(record, note):
     h = record["metrics"]
     bal = h.get("balanced_accuracy")
     ci = h.get("balanced_accuracy_ci95") or [None, None]
@@ -121,21 +125,22 @@ def _prepend_changelog(path, record, note):
          + (f" (95% CI {ci[0]*100:.1f}–{ci[1]*100:.1f})" if ci[0] is not None else "")
          + f"; under {h.get('under',0)*100:.1f}%; over {h.get('over',0)*100:.1f}%; "
          + f"health-under {h.get('health_under',0)*100:.1f}%."),
-        f"Gold: {record.get('gold_version')}. Gate: {record.get('gate')}. "
-        f"Parent: v{record['parent']}." if record.get("parent") else
-        f"Gold: {record.get('gold_version')}. Gate: {record.get('gate')}.",
+        (f"Gold: {record.get('gold_version')}. Gate: {record.get('gate')}. Parent: v{record['parent']}."
+         if record.get("parent") else
+         f"Gold: {record.get('gold_version')}. Gate: {record.get('gate')}."),
     ]
     if note:
         body.append(note)
     body.append("")
-    block = "\n".join(body) + "\n"
+    return "\n".join(body) + "\n"
+
+
+def _prepend_changelog(path, record, note):
+    """Insert the newest block immediately after the fixed header (header stays at the top)."""
+    block = _changelog_block(record, note)
     existing = ""
     if os.path.exists(path):
-        with open(path) as f:
-            existing = f.read()
-    else:
-        existing = "# Model changelog\n\nBalanced GIRP accuracy per tagged version (newest first).\n\n"
-        header, existing = existing, ""
-        block = header + block
+        content = open(path).read()
+        existing = content[len(_CHANGELOG_HEADER):] if content.startswith(_CHANGELOG_HEADER) else content
     with open(path, "w") as f:
-        f.write(block + existing)
+        f.write(_CHANGELOG_HEADER + block + existing)

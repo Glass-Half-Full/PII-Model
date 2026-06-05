@@ -64,6 +64,39 @@ def extract_errors(eval_dir, out_path, cap=80):
     return capped
 
 
+def accumulate(errors_path, iter_n, hard_path="data/hard_examples.jsonl"):
+    """Route reviewed errors to the Stage-2 pool: detection gaps -> positive training examples,
+    false positives -> hard negatives. Idempotent by (id, reason)."""
+    mm = [json.loads(l) for l in open(errors_path) if l.strip()]
+    os.makedirs(os.path.dirname(hard_path), exist_ok=True)
+    seen = set()
+    if os.path.exists(hard_path):
+        for line in open(hard_path):
+            if line.strip():
+                r = json.loads(line)
+                seen.add((r.get("id"), r.get("reason")))
+    pos = neg = 0
+    with open(hard_path, "a") as f:
+        for e in mm:
+            gap = set(e["probe"]["detection_gap"])
+            if gap and (e["id"], "detection_gap") not in seen:
+                spans = [{"label": l, "start": s, "end": en}
+                         for (l, s, en) in e["gold"]["spans"] if l in gap]
+                if spans:
+                    f.write(json.dumps({"id": e["id"], "text": e["text"], "spans": spans,
+                                        "source": e["source"], "iter": iter_n,
+                                        "reason": "detection_gap"}, ensure_ascii=False) + "\n")
+                    pos += 1
+            spur = e["probe"]["spurious_elements"]
+            if spur and (e["id"], "false_positive") not in seen:
+                f.write(json.dumps({"id": e["id"], "text": e["text"], "spans": [], "negative": True,
+                                    "spurious": spur, "source": e["source"], "iter": iter_n,
+                                    "reason": "false_positive"}, ensure_ascii=False) + "\n")
+                neg += 1
+    print(f"accumulated -> {hard_path}: {pos} detection-gap positives, {neg} hard negatives "
+          f"(pool now {len(seen)+pos+neg} rows)")
+
+
 def decide(before_dir, after_dir, min_delta=0.0, under_tol=0.01):
     b = _load(before_dir, "metrics.json")["headline"]
     a = _load(after_dir, "metrics.json")["headline"]
@@ -103,6 +136,8 @@ def main():
     e.add_argument("--out", required=True); e.add_argument("--cap", type=int, default=80)
     d = sub.add_parser("decide"); d.add_argument("--before", required=True)
     d.add_argument("--after", required=True); d.add_argument("--min-delta", type=float, default=0.0)
+    a = sub.add_parser("accumulate"); a.add_argument("--errors", required=True)
+    a.add_argument("--iter", type=int, required=True)
     args = ap.parse_args()
     if args.cmd == "summary":
         summary(args.eval)
@@ -110,6 +145,8 @@ def main():
         extract_errors(args.eval, args.out, cap=args.cap)
     elif args.cmd == "decide":
         decide(args.before, args.after, min_delta=args.min_delta)
+    elif args.cmd == "accumulate":
+        accumulate(args.errors, args.iter)
 
 
 if __name__ == "__main__":

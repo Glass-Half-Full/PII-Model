@@ -16,7 +16,28 @@ from girp import GIRP_PII_LABELS, classify_elements, is_valid_entity
 GIRP_CASES = []
 
 # (label, value, expected_is_valid, why) — validation regressions found by the loop.
-VALIDATION_CASES = []
+VALIDATION_CASES = [
+    # iter-001: "Citizen" is a real surname (AU placeholder "John Citizen"); the person filter
+    # wrongly rejected any name containing it, causing dangerous person under-classification.
+    ("person", "Raj Citizen", True, "iter1: Citizen is a valid surname; must not be filtered"),
+    ("person", "Jane Citizen", True, "iter1: AU placeholder name must validate as person"),
+    ("person", "senior citizen", False, "iter1: generic role phrase still filtered via 'senior'"),
+    ("person", "the manager", False, "iter1: role phrase still filtered (no regression)"),
+]
+
+
+def test_low_precision_birthplace_maiden_suppressed_not_removed():
+    """iter-001: birthplace / mother's maiden name have ~0 zero-shot precision (they fire on any
+    place name in real ai4privacy/gretel text) and drove Public over-classification. They are kept
+    in the EXTRACTION label set (removing them perturbs zero-shot person detection — measured
+    -1.7pp) but SUPPRESSED from the final element set, and kept in the GIRP rule engine."""
+    import aupii
+    # still extracted (so the zero-shot label-set context is unchanged)...
+    assert "birthplace" in aupii.GLINER_FUZZY_LABELS
+    assert "mother's maiden name" in aupii.GLINER_FUZZY_LABELS
+    # ...but suppressed from the decision, and still in the rule vocabulary
+    assert aupii.SUPPRESSED_FUZZY_LABELS == frozenset({"birthplace", "mother's maiden name"})
+    assert "birthplace" in GIRP_PII_LABELS and "mother's maiden name" in GIRP_PII_LABELS
 
 
 def test_girp_cases():
