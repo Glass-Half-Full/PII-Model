@@ -47,11 +47,22 @@ def _card(r):
 
 
 def _tfn(r):
-    return f"{r.randint(100, 999)} {r.randint(100, 999)} {r.randint(100, 999)}"
+    """A checksum-valid Australian Tax File Number (weights 1,4,3,7,5,8,6,9,10 sum % 11 == 0)."""
+    w = [1, 4, 3, 7, 5, 8, 6, 9]
+    while True:
+        d = [r.randint(0, 9) for _ in range(8)]
+        c = sum(x * wi for x, wi in zip(d, w)) % 11   # weight 10 ≡ -1 (mod 11) -> check = sum % 11
+        if c < 10:
+            dd = d + [c]
+            return f"{dd[0]}{dd[1]}{dd[2]} {dd[3]}{dd[4]}{dd[5]} {dd[6]}{dd[7]}{dd[8]}"
 
 
 def _medicare(r):
-    return f"{r.randint(1000, 9999)} {r.randint(10000, 99999)} {r.randint(0, 9)}"
+    """A checksum-valid Australian Medicare number (first 8 digits + check digit + issue)."""
+    w = [1, 3, 7, 9, 1, 3, 7, 9]
+    d = [r.randint(2, 6)] + [r.randint(0, 9) for _ in range(7)]
+    d.append(sum(x * wi for x, wi in zip(d, w)) % 10)
+    return f"{''.join(map(str, d[:4]))} {''.join(map(str, d[4:9]))} {r.randint(1, 9)}"
 
 
 def _passport(r):

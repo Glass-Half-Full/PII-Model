@@ -63,6 +63,14 @@ result = classify_columns(model, df, ["notes", "comments"])
 result.to_csv("classified.csv", index=False)
 ```
 
+## Australian-ready hybrid (recommended for best accuracy)
+For the strongest, Australian-tuned setup, use `aupii.py`: **gliner2** (recall) + **Microsoft
+Presidio** checksum recognizers (Luhn cards, IBAN/bank, SSN) + **Australian** recognizers
+(**TFN, Medicare, ABN, ACN, BSB**) + the GIRP rules. It raises GIRP accuracy, cuts
+over-classification vs the model alone, and validates AU identifiers by checksum. A 330 MB PII
+model option (`gliner-pii-small`) suits a 4 GB RTX 2050 / CPU. Install `requirements-hybrid.txt`;
+full guide in [`AUPII.md`](AUPII.md).
+
 ## GIRP levels
 
 | Level | Applies when… |
@@ -96,6 +104,8 @@ on PII-dense text (tunable via `threshold`). Reproduce with `python benchmark.py
 | `synthetic.py` | Synthetic data generator for validation (all tiers + false-positive bait) |
 | `benchmark.py`, `BASELINE.md` | Performance baseline on a public labeled PII set (`benchmark.py` needs internet) |
 | `PRODUCTION.md` | Model-comparison findings + production roadmap (fine-tuning, calibration, monitoring) |
+| `aupii.py`, `test_aupii.py`, `AUPII.md` | **Australian-ready hybrid** (gliner2 + Presidio checksums + AU TFN/Medicare/ABN/ACN/BSB) |
+| `requirements-hybrid.txt` | Extra deps for the hybrid (Presidio, spaCy, gliner) |
 | `requirements.txt`, `setup.bat`, `setup.sh` | Dependency install (no venv/conda) |
 | `model.safetensors`, `config.json`, `tokenizer*.json`, `added_tokens.json`, `special_tokens_map.json`, `encoder_config/` | The local model + tokenizer + config |
 
