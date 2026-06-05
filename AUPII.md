@@ -60,8 +60,14 @@ from aupii import load_hybrid, classify_columns_hybrid
 model, analyzer, device = load_hybrid()          # gliner2 + Presidio (AU recognizers), local
 df = pd.read_csv("your_file.csv")
 result = classify_columns_hybrid(model, analyzer, df, ["notes", "comments"])
-# -> <col>_girp_level, <col>_girp_elements, and overall girp_level per row
+# adds per column: <col>_girp_level, <col>_girp_elements, <col>_needs_review
+# adds per row:    girp_level (max across columns) + needs_review
 ```
+
+**Human-review band:** rows flagged `needs_review` (top-tier *Highly Confidential*, or where the two
+engines disagree on the level) should be checked by a person — the production safety net for residual
+zero-shot misses. Route `result[result["needs_review"]]` to a reviewer; corrections feed `weak_label.py`
+→ fine-tuning, closing the recursive loop.
 Lightweight RTX 2050 variant:
 ```python
 from aupii import load_gliner_pii, build_analyzer, classify_columns_hybrid

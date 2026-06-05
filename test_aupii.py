@@ -60,6 +60,7 @@ def test_hybrid_classifies_au_example():
         "Patient Mary Citizen, phone 0412 345 678, tax file number 123 456 782, has asthma.")
     assert o["level"] == "Highly Confidential", o
     assert "tax file number" in o["elements"] and "tax file number" in o["structured"]
+    assert o["needs_review"] is True   # top-tier -> routed to the human-review band
 
 
 class _Skip(Exception):

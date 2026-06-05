@@ -59,6 +59,11 @@ PRESIDIO2GIRP = {
 # Business identifiers Presidio also finds (not customer-personal under GIRP; reported, not scored).
 PRESIDIO_BUSINESS = {"AU_ABN": "abn", "AU_ACN": "acn"}
 
+# Human-review band: rows at these levels — plus any row where the two engines disagree on the level —
+# are flagged `needs_review` so a human checks the highest-stakes / most-uncertain cases. This is the
+# production safety net for the residual zero-shot misses (drive the automated rate down via fine-tuning).
+REVIEW_LEVELS = {"Highly Confidential"}
+
 
 def build_analyzer(spacy_model: str = "en_core_web_sm"):
     """Build a Presidio analyzer (default + Australian recognizers + custom BSB) on a lightweight
@@ -110,12 +115,14 @@ def detect_and_classify_hybrid(model, analyzer, text, threshold: float = 0.7, va
         for l, v in model.extract_entities(text, labs, threshold=thr)["entities"].items():
             if v:
                 merged.setdefault(l, []).extend(v)
-    fuzzy = found_labels(merged, validate=validate)
-    structured = presidio_elements(analyzer, text)
-    found = fuzzy | structured | _regex_phone(text)
+    fuzzy = found_labels(merged, validate=validate) | _regex_phone(text)   # ML/text side
+    structured = presidio_elements(analyzer, text)                        # checksum/regex side
+    found = fuzzy | structured
     out = explain(found)
     out["entities"] = {l: v for l, v in merged.items() if l in found}
     out["structured"] = sorted(structured)
+    out["needs_review"] = bool(out["level"] in REVIEW_LEVELS
+                               or classify_elements(fuzzy) != classify_elements(structured))
     return out
 
 
@@ -134,6 +141,7 @@ def classify_columns_hybrid(model, analyzer, df, columns, threshold: float = 0.7
     bs = batch_size or _auto_batch_size(model)
     out = df.copy()
     row_rank = [0] * len(out)
+    row_review = [False] * len(out)
     for col in columns:
         texts = out[col].fillna("").astype(str).tolist()
         merged = [dict() for _ in texts]
@@ -145,16 +153,23 @@ def classify_columns_hybrid(model, analyzer, df, columns, threshold: float = 0.7
                 for l, v in r["entities"].items():
                     if v:
                         merged[i].setdefault(l, []).extend(v)
-        levels, elements = [], []
+        levels, elements, review = [], [], []
         for i, t in enumerate(texts):
-            found = found_labels(merged[i], validate=validate) | presidio_elements(analyzer, t) | _regex_phone(t)
+            g = found_labels(merged[i], validate=validate) | _regex_phone(t)   # ML/text side
+            p = presidio_elements(analyzer, t)                                # checksum/regex side
+            found = g | p
             lvl = classify_elements(found)
             levels.append(lvl)
             elements.append(sorted(found))
+            needs = lvl in REVIEW_LEVELS or classify_elements(g) != classify_elements(p)
+            review.append(needs)
             row_rank[i] = max(row_rank[i], RANK[lvl])
+            row_review[i] = row_review[i] or needs
         out[f"{col}_girp_level"] = levels
         out[f"{col}_girp_elements"] = elements
+        out[f"{col}_needs_review"] = review
     out["girp_level"] = [LEVELS[r] for r in row_rank]
+    out["needs_review"] = row_review
     return out
 
 
