@@ -18,6 +18,20 @@ Lever A) consulted by both the evaluator and the production twins; and Stage-2 n
 handling (`train_lora` explicit no-entity negatives + `--max-chars` OOM guard). Runbook:
 `PRECISION_LEVERS.md`.
 
+**Measured binary PII-present baselines (mode A, current v1.1.0 weights, dev-machine CPU):**
+- Synthetic gold v1 (564 rows, 482 present / 82 absent): base engine **94.5% precision @ 97.1% recall**
+  (thr 0.75); hybrid **94.4% @ 97.7%** (thr 0.75) — confirms the confusion-matrix estimate, validates
+  the metric on real model output.
+- Real ECHR legal prose (Text Anonymization Benchmark, 127 docs, all PII-present): hybrid **person
+  precision 100% / recall 94.5%**, binary recall 95.3%, and only **1 spurious element across 127
+  multi-thousand-char documents** — real free text is far less over-classified than the PII-dense
+  synthetic set. TAB has ~0 PII-absent rows, so real binary PRECISION still needs the PII-sparse PIILO
+  essays (Kaggle).
+- Lever-A per-entity sweep: DOB/licence/passport false positives are high-confidence (raising the
+  threshold alone cannot reach 90% precision), so they need validator hardening (Lever C), not Lever A;
+  `person` is already ≈95% precision. The remaining real-data steps (PIILO baseline, Stage-2) are in
+  `RUNBOOK_REAL_DATA.md`.
+
 ## v1.1.0 — 2026-06-06 (fine-tune, threshold 0.7, iter 3)
 
 Balanced GIRP accuracy 84.9% (95% CI 81.7–88.0); under 6.2%; over 8.3%; health-under 0.0%.
