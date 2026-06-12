@@ -36,13 +36,14 @@ python loop_iter.py decide --before data/eval/precision-NNN/before --after data/
 **Lever A — per-label threshold.** For **fuzzy/zero-shot** FPs (person, address, date of birth, phone,
 passport, driver's licence). Raise the per-label confidence bar in `aupii.PER_LABEL_THRESHOLDS` — a
 single map consulted by **both** `evaluate.derive` (eval) and the production twins, so eval == prod.
-Empty by default (no change). Calibrate per label L from the curve:
+Empty by default (no change). Calibrate in ONE inference pass:
 
 ```bash
-for t in 0.70 0.75 0.80 0.85 0.90; do
-  # set aupii.PER_LABEL_THRESHOLDS = {"<L>": t}, then:
-  python eval_binary.py --gold data/gold/real-v1/test.jsonl --out /tmp/sweep_${L}_$t ... ; done
-# pick the smallest t where L's per-entity precision clears your target (≥0.90) AND binary recall ≥ floor.
+python eval_binary.py --gold data/gold/real-v1/test.jsonl --per-entity-sweep \
+    --precision-target 0.90 --recall-floor 0.95
+# prints a per-label precision/recall table over thresholds 0.50..0.90 and a ready-to-paste
+# PER_LABEL_THRESHOLDS dict (smallest threshold per label hitting the precision target without
+# dropping that label's recall below floor). Paste it into aupii.py.
 ```
 
 - DOB / bank are *isolation-Public/Private* — suppressing a weak one rarely flips the binary flag (the

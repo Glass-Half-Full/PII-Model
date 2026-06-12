@@ -71,6 +71,64 @@ def best_f1_point(curve):
     return max(curve, key=lambda c: (c["f1"], c["precision"]))
 
 
+# Default high-FP fuzzy labels to calibrate (Lever A). Checksum IDs (bank/TFN/card) come from Presidio,
+# not the fuzzy model, so they are tightened Presidio-side (Lever B), not here.
+WEAK_LABELS = ["date of birth", "driver's licence number", "passport number",
+               "address", "person", "phone number"]
+
+
+def per_label_pr(gliner_per_text, texts, gold_sets, label, thr, validate=True):
+    """Presence-level precision/recall for ONE label at confidence threshold ``thr`` (Lever-A calibration).
+    A text 'predicts' the label if any extracted span of that label at conf >= thr passes validation."""
+    from girp import is_valid_entity
+    tp = fp = fn = 0
+    for spans, text, gold in zip(gliner_per_text, texts, gold_sets):
+        pred = any(l == label and c >= thr and (not validate or is_valid_entity(label, text[s:e]))
+                   for (l, s, e, c) in spans)
+        g = label in gold
+        tp += g and pred
+        fp += pred and not g
+        fn += g and not pred
+    return ev._prf(tp, fp, fn)
+
+
+def per_entity_sweep(gold_path, labels=None, thresholds=None, engine="hybrid", model_dir=None,
+                     limit=None, progress=True, precision_target=0.90, recall_floor=0.90):
+    """Sweep each weak label's threshold over ONE cached inference pass; recommend the smallest
+    threshold per label hitting ``precision_target`` without dropping that label's recall below floor."""
+    labels = labels or WEAK_LABELS
+    thresholds = thresholds or [round(0.50 + 0.05 * i, 2) for i in range(9)]   # 0.50 .. 0.90
+    recs = ev.load_gold(gold_path, limit=limit)
+    texts = [r.text for r in recs]
+    gold_sets = [set(r.gold_elements) for r in recs]
+    meta, gliner, _presidio = ev.predict_rich(engine, texts, progress=progress, model_dir=model_dir)
+    out = {}
+    for lab in labels:
+        rows = [{"threshold": t, "precision": (pr := per_label_pr(gliner, texts, gold_sets, lab, t))[0],
+                 "recall": pr[1], "f1": pr[2]} for t in thresholds]
+        ok = [x for x in rows if x["precision"] >= precision_target and x["recall"] >= recall_floor]
+        out[lab] = {"sweep": rows, "recommended": min(ok, key=lambda x: x["threshold"]) if ok else None}
+    return out, meta
+
+
+def print_per_entity_sweep(result, precision_target, recall_floor):
+    suggested = {}
+    for lab, d in result.items():
+        print(f"\n{lab}:")
+        print("  thr    P%     R%")
+        for x in d["sweep"]:
+            rec = d["recommended"]
+            mark = "  <-- recommended" if rec and x["threshold"] == rec["threshold"] else ""
+            print(f"  {x['threshold']:.2f}  {x['precision']*100:5.1f}  {x['recall']*100:5.1f}{mark}")
+        if d["recommended"] is None:
+            print(f"  (no threshold hits precision>={precision_target:.0%} with recall>={recall_floor:.0%})")
+        else:
+            suggested[lab] = d["recommended"]["threshold"]
+    print(f"\nSuggested aupii.PER_LABEL_THRESHOLDS (precision>={precision_target:.0%}, "
+          f"recall>={recall_floor:.0%}):\n  {suggested!r}")
+    print("  -> paste into aupii.py, then VERIFY on this box: python test_aupii.py && python selfcheck.py")
+
+
 def _bootstrap_binary(gold_flags, pred_flags, n_boot=2000, seed=12345):
     rng = np.random.default_rng(seed)
     g = np.array(gold_flags, dtype=bool)
@@ -263,7 +321,20 @@ def main():
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--out", default="data/eval/real-baseline")
     ap.add_argument("--model-dir", default=None)
+    ap.add_argument("--per-entity-sweep", action="store_true",
+                    help="Lever-A calibration: per-label precision/recall sweep (one inference pass)")
+    ap.add_argument("--labels", default=None, help="comma-separated labels for --per-entity-sweep")
+    ap.add_argument("--precision-target", type=float, default=0.90)
     args = ap.parse_args()
+
+    if args.per_entity_sweep:
+        labels = [x.strip() for x in args.labels.split(",")] if args.labels else None
+        result, _meta = per_entity_sweep(args.gold, labels=labels, engine=args.engine,
+                                         model_dir=args.model_dir, limit=args.limit,
+                                         precision_target=args.precision_target,
+                                         recall_floor=args.recall_floor)
+        print_per_entity_sweep(result, args.precision_target, args.recall_floor)
+        return
 
     result, mismatches = run(
         args.gold, engine=args.engine, sweep=ev._parse_sweep(args.sweep),

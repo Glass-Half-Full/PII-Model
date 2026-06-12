@@ -38,9 +38,10 @@ split (kaggle-pii vs tab). Set the real recall floor from this, then iterate.
 ## 4 · Iterate precision (Phase 3) — see PRECISION_LEVERS.md
 Per iteration: `eval_binary` → `loop_iter.py errors` (FP-ranked; prints the top spurious elements) →
 pick the lever for the dominant FP element → TDD → re-eval → `loop_iter.py decide` → `eval_gate.py` → tag.
-Lever A example — calibrate from the per-entity curve, then **verify the production path on this box**:
+Lever A — calibrate per-label thresholds in one pass, paste the result, then **verify the production path**:
 ```bash
-# set aupii.PER_LABEL_THRESHOLDS = {"date of birth": 0.9, ...}
+python eval_binary.py --gold data/gold/real-v1/test.jsonl --per-entity-sweep --precision-target 0.90 --recall-floor 0.95
+# paste the printed PER_LABEL_THRESHOLDS dict into aupii.py, then:
 python test_aupii.py && python selfcheck.py        # exercises the guarded twin path with presidio present
 ```
 

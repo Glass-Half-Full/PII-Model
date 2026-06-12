@@ -47,6 +47,17 @@ def test_best_f1_point():
     assert eb.best_f1_point(curve)["threshold"] == 0.7
 
 
+def test_per_label_pr_threshold_effect():
+    # Lever-A calibration core: precision/recall of ONE label as its threshold moves (one cached pass)
+    texts = ["Anna Smith", "Bob Jones", "Carl West"]
+    gliner = [[("person", 0, 10, 0.9)], [("person", 0, 9, 0.6)], [("person", 0, 9, 0.55)]]
+    gold = [{"person"}, {"person"}, set()]      # text2 has NO person -> a false positive when kept
+    p, r, _ = eb.per_label_pr(gliner, texts, gold, "person", 0.7)
+    assert p == 1.0 and r == 0.5                # only the 0.9 fires -> 1 tp, 1 fn, 0 fp
+    p2, r2, _ = eb.per_label_pr(gliner, texts, gold, "person", 0.5)
+    assert abs(p2 - 2 / 3) < 1e-3 and r2 == 1.0  # all three fire -> 2 tp, 1 fp (text2), 0 fn
+
+
 # --- model-free integration ----------------------------------------------------------------
 def _fixture():
     import types
