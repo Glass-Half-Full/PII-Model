@@ -29,6 +29,19 @@ def test_rates_over_under_health():
     assert r["health_total"] == 1 and abs(r["health_under"] - 1.0) < 1e-9
 
 
+def test_binary_flag_metrics():
+    # binary "PII present" flag = (level != "Public"); P/R of the present/absent decision
+    gold = ["Public", "Public", "Private", "Confidential", "Highly Confidential"]
+    pred = ["Public", "Private", "Public", "Confidential", "Confidential"]
+    # gold flag: F F T T T   ;   pred flag: F T F T T
+    #   row0 TN · row1 FP · row2 FN · row3 TP · row4 TP   -> tp=2 fp=1 fn=1 tn=1
+    m = ev.binary_flag_metrics(gold, pred)
+    assert (m["tp"], m["fp"], m["fn"], m["tn"]) == (2, 1, 1, 1)
+    assert abs(m["binary_precision"] - 2 / 3) < 1e-3
+    assert abs(m["binary_recall"] - 2 / 3) < 1e-3
+    assert abs(m["false_flag_rate"] - 0.5) < 1e-9   # fp / (fp + tn) among gold-absent rows
+
+
 def test_presence_prf():
     gold = [{"person", "phone number"}, {"email address"}]
     pred = [{"person"}, {"email address", "person"}]
@@ -65,6 +78,17 @@ def test_bootstrap_ci_shape_and_bounds():
     assert ci["accuracy"] == [1.0, 1.0]
 
 
+def test_bootstrap_ci_includes_binary():
+    gold = ["Public", "Private", "Confidential", "Highly Confidential"] * 10
+    pred = list(gold)   # perfect predictions
+    ci = ev.bootstrap_ci(gold, pred, n_boot=200, seed=1)
+    for k in ("binary_precision", "binary_recall"):
+        lo, hi = ci[k]
+        assert 0.0 <= lo <= hi <= 1.0, (k, lo, hi)
+    # perfect predictions -> binary precision & recall pinned at 1.0
+    assert ci["binary_precision"] == [1.0, 1.0] and ci["binary_recall"] == [1.0, 1.0]
+
+
 def test_recommend_threshold_respects_under_cap():
     result = {"sweep": [
         {"threshold": 0.3, "balanced_accuracy": 0.90, "under": 0.20},  # best bal but over cap
@@ -76,6 +100,76 @@ def test_recommend_threshold_respects_under_cap():
     # if cap unsatisfiable, fall back to max balanced accuracy among all
     thr2, within2 = ev.recommend_threshold(result, under_cap=0.01)
     assert within2 is False and thr2 == 0.3
+
+
+def test_derive_honors_per_label_thresholds():
+    """Lever A: a per-label threshold (empty by default) raises the bar for specific weak labels."""
+    import aupii
+    saved = aupii.PER_LABEL_THRESHOLDS
+    aupii.PER_LABEL_THRESHOLDS = {"person": 0.9}     # demand high confidence for person
+    try:
+        text = "Anna Smith and 0412345678"
+        # person at conf 0.75 < its 0.9 threshold -> dropped; phone at 0.75 >= default 0.7 -> kept
+        el, _lvl, _sp = ev.derive([("person", 0, 10, 0.75), ("phone number", 15, 25, 0.75)],
+                                  [], text, 0.7, "hybrid")
+        assert "person" not in el and "phone number" in el
+    finally:
+        aupii.PER_LABEL_THRESHOLDS = saved
+
+
+def test_aupii_filtered_confident_applies_per_label():
+    """Lever A in the production twins: keep entity strings whose confidence clears the per-label bar."""
+    import aupii
+    saved = aupii.PER_LABEL_THRESHOLDS
+    aupii.PER_LABEL_THRESHOLDS = {"person": 0.9}
+    try:
+        text = "Anna Smith calls 0412345678"
+        ents = {"person": [{"start": 0, "end": 10, "confidence": 0.75}],          # below 0.9 -> dropped
+                "phone number": [{"start": 17, "end": 27, "confidence": 0.75}]}    # >= default 0.7 -> kept
+        out = aupii._filtered_confident(text, ents, 0.7)
+        assert "person" not in out and out["phone number"] == ["0412345678"]
+    finally:
+        aupii.PER_LABEL_THRESHOLDS = saved
+
+
+def test_evaluate_headline_and_sweep_carry_binary_flag():
+    """Model-free integration: monkeypatch predict_rich/load_gold, drive derive() with canned
+    spans, and confirm evaluate() surfaces the binary-flag metrics in headline + every sweep row."""
+    import types
+    recs = [
+        # gold Public but a (valid) person fires -> false flag (FP)
+        types.SimpleNamespace(id="a", source="t", text="Anna Smith",
+                              gold_level="Public", gold_elements=[], spans=[]),
+        # gold Public, nothing fires -> TN
+        types.SimpleNamespace(id="b", source="t", text="the meeting notes",
+                              gold_level="Public", gold_elements=[], spans=[]),
+        # gold Private phone, phone fires -> TP
+        types.SimpleNamespace(id="c", source="t", text="ring 0412345678 today",
+                              gold_level="Private", gold_elements=["phone number"],
+                              spans=[types.SimpleNamespace(label="phone number", start=5, end=15)]),
+    ]
+    gliner = [[("person", 0, 10, 0.9)], [], [("phone number", 5, 15, 0.95)]]
+
+    def fake_predict_rich(engine, texts, *a, **k):
+        return {"engine": "hybrid", "device": "cpu"}, gliner, [[] for _ in texts]
+
+    saved_pr, saved_lg = ev.predict_rich, ev.load_gold
+    ev.predict_rich = fake_predict_rich
+    ev.load_gold = lambda path, limit=None: recs
+    try:
+        result, _ = ev.evaluate("ignored", engine="hybrid", threshold=0.7,
+                                sweep=[0.5, 0.7], n_boot=50, progress=False)
+    finally:
+        ev.predict_rich, ev.load_gold = saved_pr, saved_lg
+
+    h = result["headline"]
+    for k in ("binary_precision", "binary_recall", "binary_f1", "false_flag_rate",
+              "binary_precision_ci95", "binary_recall_ci95"):
+        assert k in h, f"missing headline key {k}"
+    # tp=1 (phone), fp=1 (person on Public row), fn=0, tn=1
+    assert h["binary_precision"] == 0.5 and h["binary_recall"] == 1.0
+    assert abs(h["false_flag_rate"] - 0.5) < 1e-9
+    assert all("binary_precision" in s and "binary_recall" in s for s in result["sweep"])
 
 
 def _run():

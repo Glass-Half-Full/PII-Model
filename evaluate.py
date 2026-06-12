@@ -39,7 +39,8 @@ from girp import (LEVELS, RANK, SENSITIVE_LABELS, classify_elements, found_label
 from gold_data.schema import from_jsonl
 
 FLOOR = 0.3          # extract gliner spans down to this confidence; sweep filters upward
-HEALTH_THR = 0.4     # fixed health-pass override (matches aupii.GLINER_FUZZY_GROUPS)
+HEALTH_THR = 0.6     # fixed health-pass override (MUST match aupii.GLINER_FUZZY_GROUPS health group)
+PRESIDIO_THR = 0.4   # min Presidio score to keep a structured detection (matches presidio_elements)
 HEALTH_LABELS = set(SENSITIVE_LABELS)
 
 
@@ -99,23 +100,26 @@ def predict_rich(engine, texts, batch_size=None, progress=True, model_dir=None):
         return {"engine": "base", "device": dev}, gliner, [[] for _ in texts]
 
 
-def derive(gliner_spans, presidio_spans, text, threshold, engine, validate=True):
+def derive(gliner_spans, presidio_spans, text, threshold, engine, validate=True,
+           health_thr=HEALTH_THR, presidio_thr=PRESIDIO_THR):
     """Apply a global threshold to cached rich spans -> (elements set, level, pred_spans).
 
-    Health labels use the fixed HEALTH_THR; all other gliner labels use ``threshold``. The element
-    set and level are computed by the SAME production functions used at inference time.
+    Health labels use ``health_thr`` (the fixed health-pass override); all other gliner labels use
+    ``threshold``. Presidio structured detections are kept at >= ``presidio_thr``. The element set
+    and level are computed by the SAME production functions used at inference time.
     """
-    from aupii import SUPPRESSED_FUZZY_LABELS, _regex_phone
+    from aupii import PER_LABEL_THRESHOLDS, SUPPRESSED_FUZZY_LABELS, _regex_phone
     merged = collections.defaultdict(list)
     kept = []
     for (lbl, s, e, c) in gliner_spans:
-        thr = HEALTH_THR if lbl in HEALTH_LABELS else threshold
+        thr = PER_LABEL_THRESHOLDS.get(lbl, health_thr if lbl in HEALTH_LABELS else threshold)
         if c >= thr:
             merged[lbl].append(text[s:e])
             kept.append((lbl, s, e))
+    pres = [(g, s, e, sc) for (g, s, e, sc) in presidio_spans if sc >= presidio_thr]
     if engine == "hybrid":
         fuzzy = (found_labels(dict(merged), validate=validate) | _regex_phone(text)) - SUPPRESSED_FUZZY_LABELS
-        structured = {g for (g, _, _, _) in presidio_spans}
+        structured = {g for (g, _, _, _) in pres}
         elements = fuzzy | structured
     else:
         elements = found_labels(dict(merged), validate=validate) | regex_elements(text)
@@ -124,7 +128,7 @@ def derive(gliner_spans, presidio_spans, text, threshold, engine, validate=True)
     pred_spans = [(lbl, s, e) for (lbl, s, e) in kept
                   if lbl not in suppressed and (not validate or is_valid_entity(lbl, text[s:e]))]
     if engine == "hybrid":
-        pred_spans += [(g, s, e) for (g, s, e, _sc) in presidio_spans]
+        pred_spans += [(g, s, e) for (g, s, e, _sc) in pres]
     return elements, level, pred_spans
 
 
@@ -178,6 +182,31 @@ def _prf(tp, fp, fn):
     r = tp / (tp + fn) if tp + fn else 0.0
     f = 2 * p * r / (p + r) if p + r else 0.0
     return round(p, 4), round(r, 4), round(f, 4)
+
+
+def binary_flag_metrics(gold_levels, pred_levels):
+    """Binary "PII present" flag metrics: flag = (level != "Public").
+
+    Precision/recall/F1 of the present/absent decision the model actually ships (a field is
+    flagged iff at least one valid PII element survived). ``false_flag_rate`` is the
+    false-positive rate among genuinely PII-absent rows (fp / (fp + tn)) — the precision enemy
+    on real free text. The HIGH-PRECISION target is ``binary_precision`` at a fixed recall floor.
+    """
+    tp = fp = fn = tn = 0
+    for g, p in zip(gold_levels, pred_levels):
+        gf, pf = g != "Public", p != "Public"
+        if gf and pf:
+            tp += 1
+        elif pf:
+            fp += 1
+        elif gf:
+            fn += 1
+        else:
+            tn += 1
+    p, r, f = _prf(tp, fp, fn)
+    return {"binary_precision": p, "binary_recall": r, "binary_f1": f,
+            "false_flag_rate": round(fp / (fp + tn), 4) if (fp + tn) else 0.0,
+            "tp": tp, "fp": fp, "fn": fn, "tn": tn}
 
 
 def presence_prf(gold_sets, pred_sets):
@@ -243,17 +272,22 @@ def bootstrap_ci(gold_levels, pred_levels, n_boot=2000, seed=12345):
     g = np.array([RANK[x] for x in gold_levels])
     p = np.array([RANK[x] for x in pred_levels])
     n = len(g)
-    accs, bals, unders = [], [], []
+    accs, bals, unders, bprecs, brecs = [], [], [], [], []
     for _ in range(n_boot):
         idx = rng.integers(0, n, n)
         gi, pi = g[idx], p[idx]
         accs.append((gi == pi).mean())
         unders.append((pi < gi).mean())
         bals.append(_bal_from_ranks(gi, pi))
+        gf, pf = gi > 0, pi > 0           # binary flag = rank > 0 (level != "Public")
+        tp = int((gf & pf).sum()); fp = int((~gf & pf).sum()); fn = int((gf & ~pf).sum())
+        bprecs.append(tp / (tp + fp) if (tp + fp) else 0.0)
+        brecs.append(tp / (tp + fn) if (tp + fn) else 0.0)
 
     def ci(a):
         return [round(float(np.percentile(a, 2.5)), 4), round(float(np.percentile(a, 97.5)), 4)]
-    return {"accuracy": ci(accs), "balanced_accuracy": ci(bals), "under": ci(unders)}
+    return {"accuracy": ci(accs), "balanced_accuracy": ci(bals), "under": ci(unders),
+            "binary_precision": ci(bprecs), "binary_recall": ci(brecs)}
 
 
 # ---------------------------------------------------------------------------
@@ -299,8 +333,11 @@ def evaluate(gold_path, engine="hybrid", threshold=0.7, sweep=None, span_iou=0.5
         cm = confusion(gold_levels, levels)
         bal, per_tier = balanced_accuracy(cm)
         rt = rates(gold_levels, levels)
+        bn = binary_flag_metrics(gold_levels, levels)
         return {"threshold": round(threshold_, 3), "confusion": cm.tolist(),
                 "balanced_accuracy": round(bal, 4), "per_tier_recall": per_tier, **rt,
+                "binary_precision": bn["binary_precision"], "binary_recall": bn["binary_recall"],
+                "binary_f1": bn["binary_f1"], "false_flag_rate": bn["false_flag_rate"],
                 "_levels": levels, "_elements": elements, "_spans": spans}
 
     sweep_thresholds = sweep or [round(threshold, 3)]
@@ -326,6 +363,9 @@ def evaluate(gold_path, engine="hybrid", threshold=0.7, sweep=None, span_iou=0.5
             "accuracy": primary["accuracy"], "accuracy_ci95": ci["accuracy"],
             "over": primary["over"], "under": primary["under"], "under_ci95": ci["under"],
             "health_under": primary["health_under"], "per_tier_recall": primary["per_tier_recall"],
+            "binary_precision": primary["binary_precision"], "binary_precision_ci95": ci["binary_precision"],
+            "binary_recall": primary["binary_recall"], "binary_recall_ci95": ci["binary_recall"],
+            "binary_f1": primary["binary_f1"], "false_flag_rate": primary["false_flag_rate"],
         },
         "confusion_matrix": {"levels": LEVELS, "rows_are_gold": True, "matrix": primary["confusion"]},
         "per_entity_presence": presence,
@@ -424,18 +464,28 @@ def write_report(result, out_dir, mismatches=None, under_cap=0.10):
         f"- Per-tier recall: " + ", ".join(f"{k} {v if v is None else round(v*100,1)}%"
                                            for k, v in h["per_tier_recall"].items()),
         "",
+        "## Binary PII-present flag (precision target)",
+        "",
+        f"- **Precision: {h['binary_precision']*100:.1f}%**  "
+        f"(95% CI {h['binary_precision_ci95'][0]*100:.1f}–{h['binary_precision_ci95'][1]*100:.1f})"
+        f"   ·   Recall: {h['binary_recall']*100:.1f}%  "
+        f"(95% CI {h['binary_recall_ci95'][0]*100:.1f}–{h['binary_recall_ci95'][1]*100:.1f})",
+        f"- F1: {h['binary_f1']*100:.1f}%   ·   False-flag rate (among PII-absent rows): "
+        f"{h['false_flag_rate']*100:.1f}%",
+        "",
         "## Confusion matrix (rows = gold tier, columns = predicted)",
         "",
         _md_confusion(cm),
         "",
         "## Threshold sweep",
         "",
-        "| threshold | balanced acc% | accuracy% | over% | under% | health-under% |",
-        "|---:|---:|---:|---:|---:|---:|",
+        "| threshold | balanced acc% | accuracy% | over% | under% | health-under% | bin-P% | bin-R% |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for s in result["sweep"]:
         L.append(f"| {s['threshold']} | {s['balanced_accuracy']*100:.1f} | {s['accuracy']*100:.1f} | "
-                 f"{s['over']*100:.1f} | {s['under']*100:.1f} | {s['health_under']*100:.1f} |")
+                 f"{s['over']*100:.1f} | {s['under']*100:.1f} | {s['health_under']*100:.1f} | "
+                 f"{s['binary_precision']*100:.1f} | {s['binary_recall']*100:.1f} |")
     L += [
         "",
         f"**Recommended threshold: {rec_thr}** (max balanced accuracy with under-classification "
@@ -488,6 +538,8 @@ def main():
     print(f"\nbalanced GIRP accuracy {h['balanced_accuracy']*100:.1f}% "
           f"(CI {h['balanced_accuracy_ci95'][0]*100:.1f}-{h['balanced_accuracy_ci95'][1]*100:.1f}); "
           f"under {h['under']*100:.1f}%; over {h['over']*100:.1f}%")
+    print(f"binary PII-present flag: precision {h['binary_precision']*100:.1f}% / "
+          f"recall {h['binary_recall']*100:.1f}%  ·  false-flag {h['false_flag_rate']*100:.1f}%")
     print(f"report: {path}  ·  mismatches: {len(mismatches)}")
 
 

@@ -42,9 +42,20 @@ def _regex_phone(text: str) -> set:
 GLINER_FUZZY_GROUPS = [
     (["person", "phone number", "date of birth", "address", "birthplace", "mother's maiden name",
       "passport number", "driver's licence number"], None),   # zero-shot handles AU formats Presidio misses
-    (["medical condition", "health condition", "illness"], 0.4),
+    (["medical condition", "health condition", "illness"], 0.6),   # raised 0.4->0.6 in loop iter-002
 ]
 GLINER_FUZZY_LABELS = [l for labs, _ in GLINER_FUZZY_GROUPS for l in labs]
+
+# Lever A (per-entity precision): raise the confidence bar on individual high-false-positive labels
+# without disturbing the rest. EMPTY by default = no behavior change. Calibrate per label from the
+# real-data per-entity precision/recall curve (see PRECISION_LEVERS.md), e.g.
+#   {"date of birth": 0.9, "driver's licence number": 0.9, "passport number": 0.85}
+# evaluate.derive and the production hybrid twins BOTH consult this map, so eval == production.
+PER_LABEL_THRESHOLDS: dict = {}
+# The health pass ran at 0.4 for maximum recall, but that hallucinated health conditions in long
+# finance/EDIFACT text (15 over-classified rows). At 0.6, balanced GIRP accuracy rises while Highly
+# Confidential recall stays 100% and health under-classification stays 0% on gold v1 — true health
+# conditions are detected with high confidence. Kept below 0.8 (where Highly recall starts to drop).
 
 # Low-precision zero-shot labels SUPPRESSED from the final element set (loop iter-001). "birthplace"
 # and "mother's maiden name" fire on ordinary place names in real text ("Albuquerque museum",
@@ -129,14 +140,39 @@ def presidio_spans(analyzer, text, score_threshold=0.4):
     return out
 
 
+def _group_floor(labs, default_thr):
+    """Lowest threshold relevant to a group = min(default, any per-label overrides in the group),
+    so a per-label override below the group default still surfaces its candidates for filtering."""
+    return min([default_thr] + [PER_LABEL_THRESHOLDS[l] for l in labs if l in PER_LABEL_THRESHOLDS])
+
+
+def _filtered_confident(text, entities, default_thr):
+    """Keep entity strings whose confidence clears PER_LABEL_THRESHOLDS[label] (else default_thr).
+    Mirrors evaluate.derive so the hybrid twins and the evaluator make the identical decision.
+    ``entities`` is gliner2's include_spans/include_confidence output: {label: [{start,end,confidence}]}."""
+    out = {}
+    for l, vals in entities.items():
+        for v in (vals or []):
+            if isinstance(v, dict) and v.get("start") is not None \
+                    and v.get("confidence", 1.0) >= PER_LABEL_THRESHOLDS.get(l, default_thr):
+                out.setdefault(l, []).append(text[v["start"]:v["end"]])
+    return out
+
+
 def detect_and_classify_hybrid(model, analyzer, text, threshold: float = 0.7, validate: bool = True) -> dict:
     """Detect with gliner2 (fuzzy) + Presidio (structured) and classify per GIRP."""
     merged = {}
     for labs, thr_override in GLINER_FUZZY_GROUPS:
         thr = thr_override if thr_override is not None else threshold
-        for l, v in model.extract_entities(text, labs, threshold=thr)["entities"].items():
-            if v:
-                merged.setdefault(l, []).extend(v)
+        if PER_LABEL_THRESHOLDS:        # Lever A: per-label confidence filtering (mirrors derive)
+            res = _robust_batch_extract(model, [text], labs, _group_floor(labs, thr), 1, False, "",
+                                        include_spans=True, include_confidence=True)[0]
+            for l, vals in _filtered_confident(text, res["entities"], thr).items():
+                merged.setdefault(l, []).extend(vals)
+        else:
+            for l, v in model.extract_entities(text, labs, threshold=thr)["entities"].items():
+                if v:
+                    merged.setdefault(l, []).extend(v)
     fuzzy = (found_labels(merged, validate=validate) | _regex_phone(text)) - SUPPRESSED_FUZZY_LABELS
     structured = presidio_elements(analyzer, text)                        # checksum/regex side
     found = fuzzy | structured
@@ -169,12 +205,19 @@ def classify_columns_hybrid(model, analyzer, df, columns, threshold: float = 0.7
         merged = [dict() for _ in texts]
         for gi, (labs, thr_override) in enumerate(GLINER_FUZZY_GROUPS, 1):
             thr = thr_override if thr_override is not None else threshold
-            gres = _robust_batch_extract(model, texts, labs, thr, bs, progress,
-                                         f"hybrid {col} [pass {gi}/{len(GLINER_FUZZY_GROUPS)}]")
-            for i, r in enumerate(gres):
-                for l, v in r["entities"].items():
-                    if v:
-                        merged[i].setdefault(l, []).extend(v)
+            desc = f"hybrid {col} [pass {gi}/{len(GLINER_FUZZY_GROUPS)}]"
+            if PER_LABEL_THRESHOLDS:    # Lever A: per-label confidence filtering (mirrors derive)
+                gres = _robust_batch_extract(model, texts, labs, _group_floor(labs, thr), bs,
+                                             progress, desc, include_spans=True, include_confidence=True)
+                for i, r in enumerate(gres):
+                    for l, vals in _filtered_confident(texts[i], r["entities"], thr).items():
+                        merged[i].setdefault(l, []).extend(vals)
+            else:
+                gres = _robust_batch_extract(model, texts, labs, thr, bs, progress, desc)
+                for i, r in enumerate(gres):
+                    for l, v in r["entities"].items():
+                        if v:
+                            merged[i].setdefault(l, []).extend(v)
         levels, elements, review = [], [], []
         for i, t in enumerate(texts):
             g = (found_labels(merged[i], validate=validate) | _regex_phone(t)) - SUPPRESSED_FUZZY_LABELS

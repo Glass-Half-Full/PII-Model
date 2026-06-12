@@ -79,11 +79,25 @@ KAGGLE_PII = {
     "USERNAME": None, "URL_PERSONAL": None, "ID_NUM": None,
 }
 
+# Text Anonymization Benchmark (ECHR court judgments; mattmdjaga/text-anonymization-benchmark-*).
+# Real long-form legal prose. Conservative: only PERSON is a clean GIRP element. The coarse /
+# quasi-identifier types (ORG/LOC/DEM/DATETIME/QUANTITY/MISC and the heterogeneous CODE = case
+# numbers, file refs) have no clean GIRP equivalent and are DROPPED — matching the drop-coarse
+# policy above. So TAB exercises person detection in distractor-dense prose (courts, articles,
+# dates, places that bait person/org/date over-detection) rather than supplying varied PII.
+TAB = {
+    "PERSON": "person",
+    # known-but-dropped (coarse / non-personal under GIRP):
+    "CODE": None, "ORG": None, "LOC": None, "DEM": None,
+    "DATETIME": None, "QUANTITY": None, "MISC": None,
+}
+
 REGISTRY = {
     "ai4privacy": AI4PRIVACY_500K,
     "ai4privacy-200k": dict(AI4PRIVACY_200K),
     "gretel-finance": GRETEL_FINANCE,
     "kaggle-pii": KAGGLE_PII,
+    "tab": TAB,
 }
 
 

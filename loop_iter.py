@@ -17,6 +17,23 @@ import json
 import os
 
 HEALTH_UNDER_ABS_MAX = 0.03
+BINARY_RECALL_FLOOR = 0.97   # default binary-flag recall floor (don't miss real PII); revise per real baseline
+
+
+def _binary_pr(metrics):
+    """Binary PII-present (precision, recall), preferring the headline keys (emitted by evaluate.py),
+    else derived from the 4x4 confusion matrix so pre-binary eval dirs still gate. Flag = rank > 0."""
+    h = metrics.get("headline", {})
+    if h.get("binary_precision") is not None and h.get("binary_recall") is not None:
+        return h["binary_precision"], h["binary_recall"]
+    cm = (metrics.get("confusion_matrix") or {}).get("matrix")
+    if not cm:
+        raise KeyError("metrics.json has neither headline binary metrics nor a confusion matrix")
+    tp = sum(cm[i][j] for i in range(1, 4) for j in range(1, 4))
+    fp = sum(cm[0][j] for j in range(1, 4))
+    fn = sum(cm[i][0] for i in range(1, 4))
+    return (round(tp / (tp + fp), 4) if (tp + fp) else 0.0,
+            round(tp / (tp + fn), 4) if (tp + fn) else 0.0)
 
 
 def _load(eval_dir, name):
@@ -37,12 +54,19 @@ def summary(eval_dir):
     return m
 
 
+def _fp_rank(e):
+    """Sort rank for precision work: binary false positives (the precision enemy) first, then other
+    over-classifications, then under-classifications. A binary FP = gold Public but model flagged it."""
+    if e["gold"]["level"] == "Public" and e["pred"]["level"] != "Public":
+        return 0
+    return 1 if e["direction"] == "over" else 2
+
+
 def extract_errors(eval_dir, out_path, cap=80):
-    """Prioritise mismatches (dangerous under-classifications first) and write the review set."""
+    """Prioritise mismatches (binary false positives first — the precision killers) and write the
+    review set. Precision-oriented inversion of the old under-first ordering."""
     mm = _load(eval_dir, "mismatches.jsonl")
-    # dangerous direction first, then by how far off the tier is, stable by id
-    order = {"under": 0, "over": 1}
-    mm.sort(key=lambda e: (order.get(e["direction"], 2), e["id"]))
+    mm.sort(key=lambda e: (_fp_rank(e), e["id"]))
     capped = mm[:cap]
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     with open(out_path, "w") as f:
@@ -94,32 +118,47 @@ def accumulate(errors_path, iter_n, hard_path="data/hard_examples.jsonl"):
           f"(pool now {len(seen)} unique texts)")
 
 
-def decide(before_dir, after_dir, min_delta=0.0, under_tol=0.01):
-    b = _load(before_dir, "metrics.json")["headline"]
-    a = _load(after_dir, "metrics.json")["headline"]
+def decide(before_dir, after_dir, precision_min_delta=0.0, recall_floor=BINARY_RECALL_FLOOR,
+           balanced_tol=0.02, state_path="loop_state.json"):
+    """Accept an iteration iff BINARY PRECISION holds/improves AND binary recall stays >= floor AND
+    health-under is within the absolute ceiling. Balanced GIRP accuracy is a DEMOTED secondary guard
+    (blocks only a large collapse, ``balanced_tol``), so a precision-improving iteration that slightly
+    trades tiering is not blocked. This is the precision-first inversion of the old balanced-acc gate."""
+    bm = _load(before_dir, "metrics.json")
+    am = _load(after_dir, "metrics.json")
+    b, a = bm["headline"], am["headline"]
+    bp, br = _binary_pr(bm)
+    ap, ar = _binary_pr(am)
+    prec_delta = round(ap - bp, 4)
     bal_delta = round(a["balanced_accuracy"] - b["balanced_accuracy"], 4)
-    under_ok = a["under"] <= b["under"] + under_tol
+    precision_ok = prec_delta >= precision_min_delta
+    recall_ok = ar >= recall_floor
     health_ok = a["health_under"] <= HEALTH_UNDER_ABS_MAX
-    accepted = bool(bal_delta >= min_delta and under_ok and health_ok)
+    balanced_ok = bal_delta >= -balanced_tol
+    accepted = bool(precision_ok and recall_ok and health_ok and balanced_ok)
     verdict = {
         "accepted": accepted,
+        "binary_precision_before": bp, "binary_precision_after": ap, "binary_precision_delta": prec_delta,
+        "binary_recall_before": br, "binary_recall_after": ar, "recall_floor": recall_floor,
         "balanced_before": b["balanced_accuracy"], "balanced_after": a["balanced_accuracy"],
-        "balanced_delta": bal_delta,
-        "under_before": b["under"], "under_after": a["under"], "under_ok": under_ok,
-        "health_under_after": a["health_under"], "health_ok": health_ok,
-        "reasons": [],
+        "balanced_delta": bal_delta, "health_under_after": a["health_under"],
+        "precision_ok": precision_ok, "recall_ok": recall_ok,
+        "balanced_ok": balanced_ok, "health_ok": health_ok, "reasons": [],
     }
-    if bal_delta < min_delta:
-        verdict["reasons"].append(f"balanced accuracy delta {bal_delta:+.4f} < {min_delta}")
-    if not under_ok:
-        verdict["reasons"].append(f"under-classification rose to {a['under']*100:.1f}%")
+    if not precision_ok:
+        verdict["reasons"].append(f"binary precision delta {prec_delta:+.4f} < {precision_min_delta}")
+    if not recall_ok:
+        verdict["reasons"].append(f"binary recall {ar*100:.1f}% < floor {recall_floor*100:.1f}%")
+    if not balanced_ok:
+        verdict["reasons"].append(f"balanced accuracy collapsed {bal_delta*100:+.1f}pp "
+                                  f"(> {balanced_tol*100:.0f}pp secondary guard)")
     if not health_ok:
         verdict["reasons"].append(f"health-under {a['health_under']*100:.1f}% > {HEALTH_UNDER_ABS_MAX*100:.0f}%")
-    with open("loop_state.json", "w") as f:
+    with open(state_path, "w") as f:
         json.dump(verdict, f, indent=2)
-    print(("ACCEPT" if accepted else "REJECT") + f"  balanced {b['balanced_accuracy']*100:.1f}% -> "
-          f"{a['balanced_accuracy']*100:.1f}% ({bal_delta*100:+.1f}pp); "
-          f"under {b['under']*100:.1f}% -> {a['under']*100:.1f}%")
+    print(("ACCEPT" if accepted else "REJECT") + f"  binary precision {bp*100:.1f}% -> {ap*100:.1f}% "
+          f"({prec_delta*100:+.1f}pp); recall {ar*100:.1f}% (floor {recall_floor*100:.0f}%); "
+          f"balanced {b['balanced_accuracy']*100:.1f}% -> {a['balanced_accuracy']*100:.1f}%")
     if verdict["reasons"]:
         print("  " + "; ".join(verdict["reasons"]))
     return verdict
@@ -132,7 +171,9 @@ def main():
     e = sub.add_parser("errors"); e.add_argument("--eval", required=True)
     e.add_argument("--out", required=True); e.add_argument("--cap", type=int, default=80)
     d = sub.add_parser("decide"); d.add_argument("--before", required=True)
-    d.add_argument("--after", required=True); d.add_argument("--min-delta", type=float, default=0.0)
+    d.add_argument("--after", required=True)
+    d.add_argument("--precision-min-delta", type=float, default=0.0)
+    d.add_argument("--recall-floor", type=float, default=BINARY_RECALL_FLOOR)
     a = sub.add_parser("accumulate"); a.add_argument("--errors", required=True)
     a.add_argument("--iter", type=int, required=True)
     args = ap.parse_args()
@@ -141,7 +182,8 @@ def main():
     elif args.cmd == "errors":
         extract_errors(args.eval, args.out, cap=args.cap)
     elif args.cmd == "decide":
-        decide(args.before, args.after, min_delta=args.min_delta)
+        decide(args.before, args.after, precision_min_delta=args.precision_min_delta,
+               recall_floor=args.recall_floor)
     elif args.cmd == "accumulate":
         accumulate(args.errors, args.iter)
 

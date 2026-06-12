@@ -144,6 +144,51 @@ def ingest_gretel_finance(n, split="train", max_scan=None, max_chars=600, lang="
             break
 
 
+def ingest_tab(n, split="test", max_scan=None):
+    """Text Anonymization Benchmark — ECHR court judgments (real long-form legal prose).
+
+    ``mattmdjaga/text-anonymization-benchmark-val-test``, fetched via datasets-server like the
+    other public sources. Conservative mapping (PERSON -> person; coarse/quasi types dropped)
+    means TAB rows are person-name PII embedded in distractor-dense prose — a recall + per-entity
+    precision stress test, NOT a source of PII-absent rows (ECHR judgments always name people).
+    TAB ships ~12 parallel annotations per doc; ``_tab_mentions`` picks one quality-checked
+    annotator deterministically. Yields (GoldRecord, unknown_labels).
+    """
+    dataset = "mattmdjaga/text-anonymization-benchmark-val-test"
+    max_scan = max_scan or n * 3
+    got = 0
+    for row in _iter_raw(dataset, "default", split, max_scan):
+        text = row.get("text") or ""
+        if not text:
+            continue
+        entries = _tab_mentions(row.get("annotations") or {}, row.get("quality_checked"))
+        raw_spans, unknown = _spans_from(text, entries, "tab")
+        yield build_record(text, raw_spans, source="tab", split=""), unknown
+        got += 1
+        if got >= n:
+            break
+
+
+def _tab_mentions(annotations, quality_checked=None):
+    """Flatten TAB's per-annotator entity_mentions to ``[{label,start,end}]`` using ONE annotator.
+
+    Prefer a quality-checked annotator (those that passed TAB's QC); otherwise the first by sorted
+    name. One consistent annotator gives a deterministic gold without having to merge the
+    boundary-divergent parallel annotations.
+    """
+    if not annotations:
+        return []
+    prefer = [a for a in (quality_checked or []) if a in annotations]
+    key = sorted(prefer)[0] if prefer else sorted(annotations)[0]
+    out = []
+    for m in (annotations.get(key) or {}).get("entity_mentions", []):
+        s, e = m.get("start_offset"), m.get("end_offset")
+        if s is None or e is None:
+            continue
+        out.append({"label": m.get("entity_type"), "start": s, "end": e})
+    return out
+
+
 def ingest_kaggle_pii(path, n=None):
     """Kaggle 'PII Data Detection' / PIILO essays from a LOCAL json file (needs Kaggle creds to
     download separately). Expects the competition format: [{"full_text", "tokens", "trailing_whitespace",

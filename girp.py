@@ -209,7 +209,9 @@ def is_valid_entity(label: str, value: str) -> bool:
     if label == "bank account number":
         return 6 <= d <= 18 and len(v) <= 34 and ":" not in v and "." not in v
     if label == "date of birth":
-        return 3 <= d <= 8 and ":" not in v
+        # a written DOB carries a date separator (12/05/1990, 1990-05-12); a bare digit run is a
+        # timestamp/ID (e.g. YYYYMMDD in finance messages), not a birth date. (loop iter-002)
+        return 3 <= d <= 8 and ":" not in v and bool(re.search(r"\d[/.\-]\d", v))
     if label == "address":
         if _STREET_RE.search(v):
             return True

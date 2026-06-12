@@ -37,17 +37,35 @@ def load_examples(path):
     return [json.loads(l) for l in open(path) if l.strip()]
 
 
+def _entities_for(row, explicit_negatives):
+    """Entity dict for one hard-example row. A confirmed no-entity NEGATIVE (false positive the model
+    must learn to suppress) is emitted with the FULL GIRP label vocabulary mapped to empty lists, so
+    the trainer sees "these labels were queried and found nothing here" rather than an unlabelled blank."""
+    ents = _spans_to_entities(row["text"], row["spans"])
+    if explicit_negatives and row.get("negative") and not ents:
+        from girp import GIRP_PII_LABELS
+        return {lbl: [] for lbl in GIRP_PII_LABELS}
+    return ents
+
+
 def build_training_set(hard_path="data/hard_examples.jsonl", augment_n=200, seed=0,
-                       out_path="data/training_set.jsonl"):
+                       out_path="data/training_set.jsonl", max_chars=None, explicit_negatives=True):
     """Convert the hard-example pool to gliner2 InputExample dicts and blend in class-balanced
     synthetic-au rows (so fine-tuning does not catastrophically forget broad recall).
 
-    Returns the list of {"text", "entities"} dicts; also writes them to out_path if given.
-    Offline and GPU-free, so it is unit-testable.
+    ``max_chars`` drops over-long real rows (TAB judgments run to thousands of chars) so a 4 GB card
+    doesn't OOM. ``explicit_negatives`` teaches suppression of the high-FP labels on no-entity rows.
+    Returns the list of {"text", "entities"} dicts; also writes them to out_path if given. Offline and
+    GPU-free, so it is unit-testable.
     """
-    examples = []
+    examples, skipped_long = [], 0
     for r in load_examples(hard_path):
-        examples.append({"text": r["text"], "entities": _spans_to_entities(r["text"], r["spans"])})
+        if max_chars and len(r["text"]) > max_chars:
+            skipped_long += 1
+            continue
+        examples.append({"text": r["text"], "entities": _entities_for(r, explicit_negatives)})
+    n_real = len(examples)
+    n_neg = sum(1 for e in examples if not any(e["entities"].values()))
     if augment_n:
         from synthetic import generate_synthetic_dataset
         for row in generate_synthetic_dataset(augment_n, seed=seed, return_spans=True):
@@ -55,6 +73,12 @@ def build_training_set(hard_path="data/hard_examples.jsonl", augment_n=200, seed
             for (label, s, e) in row["spans"]:
                 ents[label].append(row["text"][s:e])
             examples.append({"text": row["text"], "entities": dict(ents)})
+    n_pos_aug = sum(1 for e in examples[n_real:] if any(e["entities"].values()))
+    if n_neg and n_pos_aug < n_neg:
+        print(f"[train_lora] WARNING: {n_neg} suppression negatives but only {n_pos_aug} synthetic "
+              f"positives — raise --augment so negatives don't erode recall on the weak labels.")
+    if skipped_long:
+        print(f"[train_lora] skipped {skipped_long} rows longer than {max_chars} chars (4 GB OOM guard)")
     if out_path:
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
         with open(out_path, "w") as f:
@@ -73,6 +97,8 @@ def main():
     ap.add_argument("--grad-accum", type=int, default=8)        # keep effective batch reasonable
     ap.add_argument("--lora-r", type=int, default=8)
     ap.add_argument("--augment", type=int, default=200, help="synthetic-au rows to blend in")
+    ap.add_argument("--max-chars", type=int, default=2000,
+                    help="drop hard rows longer than this (4 GB OOM guard); 0 disables")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--allow-cpu", action="store_true", help="force CPU (impractically slow)")
     args = ap.parse_args()
@@ -81,39 +107,53 @@ def main():
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     import torch
 
-    examples = build_training_set(args.data, augment_n=args.augment, seed=args.seed)
+    examples = build_training_set(args.data, augment_n=args.augment, seed=args.seed,
+                                  max_chars=args.max_chars or None)
+    n_neg = sum(1 for e in examples if not any(e["entities"].values()))
     print(f"training set: {len(examples)} examples "
-          f"({sum(1 for e in examples if e['entities'])} with entities, "
-          f"{sum(1 for e in examples if not e['entities'])} no-entity negatives)")
+          f"({len(examples) - n_neg} with entities, {n_neg} no-entity/suppression negatives)")
 
-    if not torch.cuda.is_available() and not args.allow_cpu:
+    has_accel = torch.cuda.is_available() or getattr(torch.backends, "mps", None) and torch.backends.mps.is_available()
+    if not has_accel and not args.allow_cpu:
         raise SystemExit(
-            "No CUDA detected. LoRA fine-tuning targets the RTX 2050 (4 GB). Re-run on the GPU box, "
-            "or pass --allow-cpu to force CPU (impractically slow). The training set has been written "
-            "to data/training_set.jsonl regardless.")
+            "No CUDA/MPS accelerator detected. LoRA fine-tuning targets the RTX 2050 (4 GB) or Apple "
+            "MPS. Re-run on an accelerator, or pass --allow-cpu (impractically slow). The training set "
+            "has been written to data/training_set.jsonl regardless.")
 
     from gliner2 import GLiNER2
     from gliner2.training.trainer import GLiNER2Trainer, TrainingConfig
 
     torch.manual_seed(args.seed)
-    model = GLiNER2.from_pretrained(args.base)
-    model.apply_lora(r=args.lora_r, alpha=2 * args.lora_r)     # LoRA keeps the update small/regularized
+    base = GLiNER2.from_pretrained(args.base)
+    # apply_lora RETURNS a PeftModel wrapping the base; we must train and merge THAT (not `base`).
+    peft_model = base.apply_lora(r=args.lora_r, alpha=2 * args.lora_r)
     try:
-        model.gradient_checkpointing_enable()                 # trade compute for memory on 4 GB
+        peft_model.gradient_checkpointing_enable()             # trade compute for memory on 4 GB
     except Exception as e:
         print(f"[train_lora] gradient checkpointing unavailable ({e}); continuing")
 
     cfg = TrainingConfig(
-        output_dir=args.out, num_epochs=args.epochs,
+        output_dir=os.path.join(args.out, "_trainer"), num_epochs=args.epochs,
         batch_size=args.batch_size, gradient_accumulation_steps=args.grad_accum,
-        fp16=torch.cuda.is_available(), seed=args.seed, save_adapter_only=False,
+        fp16=torch.cuda.is_available(), seed=args.seed, save_adapter_only=True,
+        num_workers=0, pin_memory=False,          # avoid spawn issues; MPS has no pinned memory
+        eval_strategy="no", save_best=False, logging_steps=10,
     )
-    GLiNER2Trainer(model, cfg).train(train_data=examples)
-    model.merge_lora()
-    model.save_pretrained(args.out)
-    print(f"[train_lora] merged LoRA + saved to {args.out}. Next: "
-          f"python evaluate.py --gold data/gold/v1/test.jsonl --model-dir {args.out} --out-version finetuned ; "
-          f"python eval_gate.py --gold data/gold/v1/dev.jsonl ; python selfcheck.py")
+    GLiNER2Trainer(peft_model, cfg).train(train_data=examples)
+
+    # Merge the LoRA deltas into the base weights and save a plain, loadable checkpoint.
+    merged = peft_model.merge_and_unload()
+    ckpt = os.path.join(args.out, "final")
+    merged.save_pretrained(ckpt, merge_lora=False, save_adapter_only=False)
+    import shutil
+    for name in ("special_tokens_map.json", "added_tokens.json"):   # belt-and-braces for the loader
+        src, dst = os.path.join(args.base, name), os.path.join(ckpt, name)
+        if os.path.exists(src) and not os.path.exists(dst):
+            shutil.copy2(src, dst)
+    print(f"[train_lora] merged fine-tuned checkpoint at {ckpt}. Next:\n"
+          f"  python evaluate.py --gold data/gold/v1/test.jsonl --model-dir {ckpt} --out-version finetuned/after\n"
+          f"  python loop_iter.py decide --before data/eval/iter-002/after --after data/eval/finetuned/after\n"
+          f"  python selfcheck.py   # confirm the fine-tuned weights still run fully offline")
 
 
 if __name__ == "__main__":

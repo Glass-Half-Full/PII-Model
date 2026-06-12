@@ -23,7 +23,25 @@ VALIDATION_CASES = [
     ("person", "Jane Citizen", True, "iter1: AU placeholder name must validate as person"),
     ("person", "senior citizen", False, "iter1: generic role phrase still filtered via 'senior'"),
     ("person", "the manager", False, "iter1: role phrase still filtered (no regression)"),
+    # iter-002: a written DOB has a date separator; bare digit runs are timestamps/IDs (YYYYMMDD
+    # finance timestamps were tagged DOB). All 32 gold DOBs have a separator -> 0 recall cost.
+    ("date of birth", "11/02/1982", True, "iter2: separator-formatted DOB still valid"),
+    ("date of birth", "1990-05-12", True, "iter2: ISO DOB with '-' still valid"),
+    ("date of birth", "20210816", False, "iter2: bare YYYYMMDD timestamp is not a DOB"),
+    ("date of birth", "374", False, "iter2: bare 3-digit number is not a DOB"),
 ]
+
+
+def test_health_pass_threshold_raised():
+    """iter-002: the health detection pass ran at 0.4 and hallucinated health in finance/EDIFACT
+    text (15 over-classified rows). Raised to 0.6: balanced accuracy up, Highly recall stays 100%,
+    health-under stays 0% on gold v1 (true health conditions are high-confidence)."""
+    import aupii
+    health_override = next(thr for labs, thr in aupii.GLINER_FUZZY_GROUPS
+                           if "health condition" in labs)
+    assert health_override == 0.6, health_override
+    import evaluate
+    assert evaluate.HEALTH_THR == 0.6, "evaluate health threshold must match the production override"
 
 
 def test_low_precision_birthplace_maiden_suppressed_not_removed():
