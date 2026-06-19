@@ -19,6 +19,57 @@ this repository. Built on a local 205M-parameter GLiNER2 model (Apache-2.0).
 
 > Everything needed to run the model is in this folder. After cloning, **no downloads are required at run time.**
 
+## Download on another machine
+
+Clone with **Git LFS** so the model files download as real weights, not pointer stubs. Do not use
+GitHub's "Download ZIP" button for the model.
+
+macOS:
+```
+brew install git-lfs
+git lfs install
+git clone git@github.com:Glass-Half-Full/PII-Model.git
+cd PII-Model
+git lfs pull
+```
+
+HTTPS fallback:
+```
+git clone https://github.com/Glass-Half-Full/PII-Model.git
+cd PII-Model
+git lfs pull
+```
+
+If you already have the repo:
+```
+cd PII-Model
+git fetch origin
+git switch main
+git pull --ff-only
+git lfs pull
+```
+
+Verify the full model files are present:
+```
+git rev-parse HEAD
+git lfs ls-files -l
+ls -lh model.safetensors model-finetuned/final/model.safetensors model-finetuned/_trainer/final/adapter_model.safetensors
+```
+
+Expected LFS objects:
+```
+845fc4bd93c525b86124c58ab4f56c9eacf8587953086b14c501fab25957c007  model.safetensors
+1ff2a86d7470057cc200f94f1c7fd078c2ace437065a8c14c77d1b80a345fa92  model-finetuned/final/model.safetensors
+eca4d810c9480a59a621d11ba2d5ab56a409cb349f9fc03e3bc9c9012355b73c  model-finetuned/_trainer/final/adapter_model.safetensors
+```
+
+The root `model.safetensors` is the base local model. The accepted fine-tuned checkpoint is in
+`model-finetuned/final/`; load it with:
+```python
+from aupii import load_hybrid
+model, analyzer, device = load_hybrid("model-finetuned/final")
+```
+
 ## Get started — 3 steps
 
 **1. Install dependencies**
