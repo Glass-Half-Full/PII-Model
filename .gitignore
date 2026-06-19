@@ -1,15 +1,16 @@
-# Local Python / Jupyter scratch (added for the PII notebook)
+# Local Python scratch.
 .venv/
 __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
-# Recursive-improvement loop artifacts (downloaded corpora + per-iteration outputs).
-# Derivative PII data is never committed; only manifests/ledgers (manifest.json,
-# models.lock, CHANGELOG_MODEL.md, METRICS.md) are tracked.
+# Local/private evaluation artifacts are not part of the plug-and-play model package.
 data/
 reports/
 errors/
 reviews/
 loop_state.json
+
+# Keep accidental extra checkpoints out of Git. The shipped fine-tuned checkpoint is already tracked
+# under this directory via explicit Git LFS entries.
 model-finetuned/

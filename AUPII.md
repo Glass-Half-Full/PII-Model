@@ -12,7 +12,7 @@ A "battle-hardened" combined-assessment pipeline that uses each engine where it 
               GIRP rules (girp.classify_elements) ──▶ Public / Private / Confidential / Highly Confidential
 ```
 
-**Why hybrid:** a bigger model gave ~0 gain (see `PRODUCTION.md`). The real win is letting the
+**Why hybrid:** the real win is letting the
 zero-shot model do *recall* and a checksum engine do *precision* — which removes the
 account→card / numeric-ID false positives that drove over-classification, and adds reliable,
 checksum-validated **Australian** identifiers.
@@ -66,8 +66,7 @@ result = classify_columns_hybrid(model, analyzer, df, ["notes", "comments"])
 
 **Human-review band:** rows flagged `needs_review` (top-tier *Highly Confidential*, or where the two
 engines disagree on the level) should be checked by a person — the production safety net for residual
-zero-shot misses. Route `result[result["needs_review"]]` to a reviewer; corrections feed `weak_label.py`
-→ fine-tuning, closing the recursive loop.
+zero-shot misses.
 Lightweight RTX 2050 variant:
 ```python
 from aupii import load_gliner_pii, build_analyzer, classify_columns_hybrid
@@ -76,4 +75,4 @@ analyzer = build_analyzer()
 result = classify_columns_hybrid(model, analyzer, df, ["notes"], threshold=0.3)
 ```
 
-Validate: `python test_aupii.py`.
+Smoke-test the shipped checkpoint with the DataFrame example in `README.md`.

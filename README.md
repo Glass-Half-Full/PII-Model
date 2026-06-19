@@ -14,7 +14,7 @@ this repository. Built on a local 205M-parameter GLiNER2 model (Apache-2.0).
 ## Requirements
 - **Python 3.13** (3.11+ works)
 - Packages in `requirements.txt` (installed with pip / your internal mirror)
-- Model weights `model.safetensors` (~800 MB) — **already included in this repo**
+- Model weights `model.safetensors` and `model-finetuned/final/model.safetensors` — **already included in this repo via Git LFS**
 - CPU works fine; an NVIDIA GPU (e.g. RTX 2050) is used automatically if a CUDA build of PyTorch is installed
 
 > Everything needed to run the model is in this folder. After cloning, **no downloads are required at run time.**
@@ -164,12 +164,6 @@ df = pd.read_csv("your_file.csv")
 result = classify_columns(model, df, ["customer_note", "agent_comment"], progress=False)
 ```
 
-## Notebook workflow
-
-```
-python -m jupyter lab gliner2_pii_demo.ipynb
-```
-
 ## Australian-ready hybrid (recommended for best accuracy)
 For the strongest, Australian-tuned setup, use `aupii.py`: **gliner2** (recall) + **Microsoft
 Presidio** checksum recognizers (Luhn cards, IBAN/bank, SSN) + **Australian** recognizers
@@ -211,44 +205,37 @@ The Australian hybrid was run over a **10,000-row** dataset with networking disa
 this repository (`girp.py`) and cover the personal-information rules that can be derived from text.
 Document-type rules (board papers, audit reports, etc.) need document-level context and are out of scope.
 
-## Validate & quality gates (CI-ready)
-```
-python test_girp.py        # deterministic GIRP rules (no deps)
-python test_failures.py    # failure-mode bait: numeric IDs, titles/pronouns, empty/long, health combos
-python test_aupii.py       # hybrid tier (skips cleanly without the extras)
-python eval_gate.py        # labeled-holdout gate: accuracy / under-classification / health-miss bars; non-zero on regression
-python selfcheck.py        # loads + classifies with networking disabled — proves no external API calls
-```
-`eval_gate.py` defaults to a reproducible synthetic holdout; point `--holdout your.jsonl` at your data
-for a production release gate.
+## Smoke check
+Run this after setup to confirm the fine-tuned model loads and classifies a small DataFrame:
+```python
+import pandas as pd
+from aupii import load_hybrid, classify_columns_hybrid
 
-## Performance baseline
-See [`BASELINE.md`](BASELINE.md) for measured precision/recall/F1 on a public labeled PII dataset —
-email F1 100%, phone/name/address ~80%+, micro-avg F1 ~78%. The main error mode is *over*-classification
-on PII-dense text (tunable via `threshold`). Reproduce with `python benchmark.py` (needs internet).
+model, analyzer, device = load_hybrid("model-finetuned/final")
+df = pd.DataFrame({"text": ["Call Sarah Lee on 02 9000 0000.", "No PII here."]})
+result = classify_columns_hybrid(model, analyzer, df, ["text"], progress=False)
+print(result[["text_girp_level", "text_girp_elements", "girp_level"]])
+```
+
+Expected behavior: the first row is flagged as PII-bearing and the second row remains `Public`.
 
 ## Files
 | File | Purpose |
 |---|---|
-| `gliner2_pii_demo.ipynb` | Main notebook (setup → scan columns → PII → classification → redaction → synthetic validation) |
-| `girp.py` | GIRP rules + format validation + regex/Luhn backstop + OOM-safe local loader + DataFrame helpers |
-| `test_girp.py` | GIRP rule, validation, regex & OOM-recovery tests |
-| `synthetic.py` | Synthetic data generator for validation (all tiers + false-positive bait) |
-| `benchmark.py`, `BASELINE.md` | Performance baseline on a public labeled PII set (`benchmark.py` needs internet) |
-| `PRODUCTION.md` | Model-comparison findings + production roadmap (fine-tuning, calibration, monitoring) |
-| `aupii.py`, `test_aupii.py`, `AUPII.md` | **Australian-ready hybrid** (gliner2 + Presidio checksums + AU TFN/Medicare/ABN/ACN/BSB) |
-| `requirements-hybrid.txt` | Extra deps for the hybrid (Presidio, spaCy, gliner) |
-| `eval_gate.py`, `selfcheck.py`, `test_failures.py` | Release eval gate, offline self-check, failure-mode regression suite |
-| `weak_label.py`, `train_lora.py` | Recursive enhancement: weak-label/review data engine + LoRA fine-tune scaffold |
-| `requirements.txt`, `setup.bat`, `setup.sh` | Dependency install (no venv/conda) |
-| `model.safetensors`, `config.json`, `tokenizer*.json`, `added_tokens.json`, `special_tokens_map.json`, `encoder_config/` | The local model + tokenizer + config |
+| `girp.py` | Local model loader, GIRP rules, validation, regex backstops, and DataFrame helpers |
+| `aupii.py`, `AUPII.md` | Australian-ready hybrid layer: gliner2 + Presidio checksum/regex recognizers |
+| `requirements.txt`, `requirements-hybrid.txt` | Runtime dependencies |
+| `setup.bat`, `setup.sh` | Basic dependency install helpers |
+| `model.safetensors` | Base local GLiNER2 model weights |
+| `model-finetuned/final/` | Accepted fine-tuned checkpoint to use by default |
+| `model-finetuned/_trainer/final/` | LoRA adapter artifact retained for provenance/reuse |
+| `config.json`, `tokenizer*.json`, `added_tokens.json`, `special_tokens_map.json`, `encoder_config/` | Base model tokenizer/config files |
 
 ## Notes
 - **Offline:** loads with `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`. Copy this folder to an air-gapped machine and it runs unchanged.
 - **Device:** automatic CUDA → CPU. On CUDA it uses fp16 (~0.4 GB VRAM — fits a 4 GB card). If you hit out-of-memory, lower `batch_size`.
 - **Tuning:** `threshold` (default `0.7` — best precision/recall balance; use `0.5` for max recall, `0.85+` for fewest false flags) and the GIRP element label sets in `girp.py` are editable.
-- **Improving further:** see [`PRODUCTION.md`](PRODUCTION.md) — a bigger model gives ~0% gain for 3× cost; the real lever is fine-tuning on labeled domain data.
-- **Robust:** format validation removes false positives (a "card" needs 13–19 digits, an "address" a number/street word, pronouns aren't names); a Luhn-checked regex backstop catches structured PII the model misses (cards, emails, international phones); CUDA out-of-memory self-recovers (batch halving → CPU fallback). Validated on synthetic data across all four tiers (`synthetic.py`).
+- **Robust:** format validation removes false positives (a "card" needs 13–19 digits, an "address" a number/street word, pronouns aren't names); a Luhn-checked regex backstop catches structured PII the model misses (cards, emails, international phones); CUDA out-of-memory self-recovers (batch halving → CPU fallback).
 
 ---
 Model: GLiNER2 (Apache-2.0), run entirely locally by this repository.

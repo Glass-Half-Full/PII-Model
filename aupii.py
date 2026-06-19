@@ -10,9 +10,8 @@ Combines two engines, each used where it is strongest:
 Both feed the GIRP rules (`girp.classify_elements`) to assign Public / Private / Confidential /
 Highly Confidential. Runs fully locally/offline (gliner2 weights + spaCy model + regex; no API calls).
 
-Why hybrid: a bigger model gave ~0 gain (see PRODUCTION.md). The real win is letting the zero-shot
-model do recall and a checksum engine do precision — which kills the account->card / numeric-ID
-false positives that drove over-classification.
+Why hybrid: the zero-shot model gives recall for contextual elements, while checksum and regex
+recognizers give precision for structured identifiers.
 """
 from __future__ import annotations
 
@@ -48,7 +47,7 @@ GLINER_FUZZY_LABELS = [l for labs, _ in GLINER_FUZZY_GROUPS for l in labs]
 
 # Lever A (per-entity precision): raise the confidence bar on individual high-false-positive labels
 # without disturbing the rest. EMPTY by default = no behavior change. Calibrate per label from the
-# real-data per-entity precision/recall curve (see PRECISION_LEVERS.md), e.g.
+# a labeled validation set, e.g.
 #   {"date of birth": 0.9, "driver's licence number": 0.9, "passport number": 0.85}
 # evaluate.derive and the production hybrid twins BOTH consult this map, so eval == production.
 PER_LABEL_THRESHOLDS: dict = {}
@@ -62,8 +61,7 @@ PER_LABEL_THRESHOLDS: dict = {}
 # "Saint-Robert-Bellarmin"), driving Public over-classification, with ~0 precision and no gold
 # support. They are kept in the EXTRACTION label set above (removing them perturbs zero-shot person
 # detection — measured -1.7pp balanced accuracy in iter-001) but dropped AFTER extraction, so the
-# decision is unperturbed. They remain in the GIRP rule engine for any future surfacing (Stage-2
-# fine-tuning or a dedicated recognizer). See LOOP.md / CHANGELOG_MODEL.md.
+# decision is unperturbed. They remain in the GIRP rule engine for any future dedicated recognizer.
 SUPPRESSED_FUZZY_LABELS = frozenset({"birthplace", "mother's maiden name"})
 
 # Presidio entity -> GIRP element. Structured / high-precision items (checksum or regex validated).
