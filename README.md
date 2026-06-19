@@ -70,9 +70,9 @@ from aupii import load_hybrid
 model, analyzer, device = load_hybrid("model-finetuned/final")
 ```
 
-## Get started — 3 steps
+## Plug-and-play DataFrame use
 
-**1. Install dependencies**
+Install the runtime dependencies once:
 
 Windows:
 ```
@@ -82,36 +82,92 @@ macOS / Linux:
 ```
 bash setup.sh
 ```
-or directly, on any OS:
+
+For the recommended Australian hybrid path, also install the hybrid extras:
 ```
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt -r requirements-hybrid.txt
+python -m spacy download en_core_web_sm
 ```
 
-**2. Open the notebook**
-```
-python -m jupyter lab gliner2_pii_demo.ipynb
-```
+After setup, inference runs locally from the downloaded repo files. No Hub/API call is required at
+classification time.
 
-**3. Point it at your data**
-
-In the **“Scan your columns”** cell, set your DataFrame and the columns to scan, then run it:
+Classify an existing pandas DataFrame:
 ```python
-df = pd.read_csv("your_file.csv")                 # your data
-COLUMNS = ["customer_note", "agent_comment"]      # the columns to scan
-result = classify_columns(model, df, COLUMNS)
-```
-`result` gains a `<col>_girp_level` (and `<col>_girp_elements`) for each scanned column, plus an
-overall **`girp_level`** per row — the most sensitive level found across those columns.
+import pandas as pd
+from aupii import load_hybrid, classify_columns_hybrid
 
-## Use it in a script (no notebook)
+model, analyzer, device = load_hybrid("model-finetuned/final")
+
+df = pd.DataFrame({
+    "customer_note": [
+        "Call Sarah Lee on 02 9000 0000 about the refund.",
+        "The quarterly report is ready for review.",
+    ],
+    "agent_comment": [
+        "Email sarah.lee@example.com before 5pm.",
+        "No personal information in this row.",
+    ],
+})
+
+result = classify_columns_hybrid(
+    model,
+    analyzer,
+    df,
+    ["customer_note", "agent_comment"],
+    threshold=0.7,
+    progress=False,
+)
+
+print(result[[
+    "girp_level",
+    "needs_review",
+    "customer_note_girp_level",
+    "customer_note_girp_elements",
+    "agent_comment_girp_level",
+    "agent_comment_girp_elements",
+]])
+```
+
+Classify a CSV and write the tagged output:
+```python
+import pandas as pd
+from aupii import load_hybrid, classify_columns_hybrid
+
+model, analyzer, device = load_hybrid("model-finetuned/final")
+
+df = pd.read_csv("your_file.csv")
+columns_to_scan = ["customer_note", "agent_comment"]
+
+result = classify_columns_hybrid(
+    model,
+    analyzer,
+    df,
+    columns_to_scan,
+    threshold=0.7,
+    progress=False,
+)
+
+result.to_csv("classified.csv", index=False)
+```
+
+The output adds per-column fields such as `<column>_girp_level`, `<column>_girp_elements`, and
+`<column>_needs_review`, plus overall row fields `girp_level` and `needs_review`.
+
+Base-model fallback without the hybrid extras:
 ```python
 import pandas as pd
 from girp import load_local_model, classify_columns
 
-model, device = load_local_model()                # local files only — no internet
+model, device = load_local_model("model-finetuned/final")
 df = pd.read_csv("your_file.csv")
-result = classify_columns(model, df, ["notes", "comments"])
-result.to_csv("classified.csv", index=False)
+result = classify_columns(model, df, ["customer_note", "agent_comment"], progress=False)
+```
+
+## Notebook workflow
+
+```
+python -m jupyter lab gliner2_pii_demo.ipynb
 ```
 
 ## Australian-ready hybrid (recommended for best accuracy)
