@@ -19,43 +19,50 @@ this repository. Built on a local 205M-parameter GLiNER2 model (Apache-2.0).
 
 > Everything needed to run the model is in this folder. After cloning, **no downloads are required at run time.**
 
-## Download on Windows
+## Download on Windows without Git, LFS, Brew, or codeload
 
-Use these direct links if you do not have Git, Git LFS, or Homebrew.
-
-1. Download the source package:
-
-[Download PII-Model-main.zip](https://github.com/Glass-Half-Full/PII-Model/archive/refs/heads/main.zip)
-
-2. Extract the ZIP, then open **PowerShell** inside the extracted `PII-Model-main` folder.
-
-3. Download the real model files into the extracted folder. This replaces any small Git LFS pointer
-files from the ZIP:
+Create an empty folder, for example `C:\PII-Model`, open **PowerShell** in that folder, then run this.
+It downloads the runtime code, tokenizer/config files, and all model artifacts from exact GitHub
+`/raw/` links:
 
 ```powershell
 $ProgressPreference = "SilentlyContinue"
 
-New-Item -ItemType Directory -Force -Path "model-finetuned\final" | Out-Null
-New-Item -ItemType Directory -Force -Path "model-finetuned\_trainer\final" | Out-Null
+$files = @(
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/AUPII.md"; Out = "AUPII.md" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/girp.py"; Out = "girp.py" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/aupii.py"; Out = "aupii.py" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/requirements.txt"; Out = "requirements.txt" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/requirements-hybrid.txt"; Out = "requirements-hybrid.txt" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/added_tokens.json"; Out = "added_tokens.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/config.json"; Out = "config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/special_tokens_map.json"; Out = "special_tokens_map.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/tokenizer.json"; Out = "tokenizer.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/tokenizer_config.json"; Out = "tokenizer_config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/encoder_config/config.json"; Out = "encoder_config\config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model.safetensors"; Out = "model.safetensors" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/final/added_tokens.json"; Out = "model-finetuned\final\added_tokens.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/final/config.json"; Out = "model-finetuned\final\config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/final/special_tokens_map.json"; Out = "model-finetuned\final\special_tokens_map.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/final/tokenizer.json"; Out = "model-finetuned\final\tokenizer.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/final/tokenizer_config.json"; Out = "model-finetuned\final\tokenizer_config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/final/encoder_config/config.json"; Out = "model-finetuned\final\encoder_config\config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/final/model.safetensors"; Out = "model-finetuned\final\model.safetensors" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/_trainer/training_config.json"; Out = "model-finetuned\_trainer\training_config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/_trainer/final/README.md"; Out = "model-finetuned\_trainer\final\README.md" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/_trainer/final/adapter_config.json"; Out = "model-finetuned\_trainer\final\adapter_config.json" },
+  @{ Url = "https://github.com/Glass-Half-Full/PII-Model/raw/0b419a1f39c804c7d24e7b15f8509dec2976faae/model-finetuned/_trainer/final/adapter_model.safetensors"; Out = "model-finetuned\_trainer\final\adapter_model.safetensors" }
+)
 
-Invoke-WebRequest `
-  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model.safetensors" `
-  -OutFile "model.safetensors"
-
-Invoke-WebRequest `
-  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/final/model.safetensors" `
-  -OutFile "model-finetuned\final\model.safetensors"
-
-Invoke-WebRequest `
-  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/_trainer/final/adapter_model.safetensors" `
-  -OutFile "model-finetuned\_trainer\final\adapter_model.safetensors"
+foreach ($file in $files) {
+  $folder = Split-Path $file.Out
+  if ($folder) { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+  Invoke-WebRequest -Uri $file.Url -OutFile $file.Out
+}
 ```
 
-Direct model links if you prefer clicking and saving manually:
-
-- [Base model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model.safetensors) -> save as `model.safetensors`
-- [Fine-tuned model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/final/model.safetensors) -> save as `model-finetuned\final\model.safetensors`
-- [LoRA adapter_model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/_trainer/final/adapter_model.safetensors) -> save as `model-finetuned\_trainer\final\adapter_model.safetensors`
+If you prefer clicking links manually, use the same URLs from the PowerShell block above and save each
+file to the matching `Out` path.
 
 Verify the model files are real downloads, not pointer stubs:
 
