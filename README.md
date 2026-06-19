@@ -19,48 +19,80 @@ this repository. Built on a local 205M-parameter GLiNER2 model (Apache-2.0).
 
 > Everything needed to run the model is in this folder. After cloning, **no downloads are required at run time.**
 
-## Download on another machine
+## Download on Windows
 
-Clone with **Git LFS** so the model files download as real weights, not pointer stubs. Do not use
-GitHub's "Download ZIP" button for the model.
+Use these direct links if you do not have Git, Git LFS, or Homebrew.
 
-macOS:
-```
-brew install git-lfs
-git lfs install
-git clone git@github.com:Glass-Half-Full/PII-Model.git
-cd PII-Model
-git lfs pull
-```
+1. Download the source package:
 
-HTTPS fallback:
-```
-git clone https://github.com/Glass-Half-Full/PII-Model.git
-cd PII-Model
-git lfs pull
-```
+[Download PII-Model-main.zip](https://github.com/Glass-Half-Full/PII-Model/archive/refs/heads/main.zip)
 
-If you already have the repo:
-```
-cd PII-Model
-git fetch origin
-git switch main
-git pull --ff-only
-git lfs pull
-```
+2. Extract the ZIP, then open **PowerShell** inside the extracted `PII-Model-main` folder.
 
-Verify the full model files are present:
-```
-git rev-parse HEAD
-git lfs ls-files -l
-ls -lh model.safetensors model-finetuned/final/model.safetensors model-finetuned/_trainer/final/adapter_model.safetensors
+3. Download the real model files into the extracted folder. This replaces any small Git LFS pointer
+files from the ZIP:
+
+```powershell
+$ProgressPreference = "SilentlyContinue"
+
+New-Item -ItemType Directory -Force -Path "model-finetuned\final" | Out-Null
+New-Item -ItemType Directory -Force -Path "model-finetuned\_trainer\final" | Out-Null
+
+Invoke-WebRequest `
+  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model.safetensors" `
+  -OutFile "model.safetensors"
+
+Invoke-WebRequest `
+  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/final/model.safetensors" `
+  -OutFile "model-finetuned\final\model.safetensors"
+
+Invoke-WebRequest `
+  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/_trainer/final/adapter_model.safetensors" `
+  -OutFile "model-finetuned\_trainer\final\adapter_model.safetensors"
 ```
 
-Expected LFS objects:
+Direct model links if you prefer clicking and saving manually:
+
+- [Base model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model.safetensors) -> save as `model.safetensors`
+- [Fine-tuned model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/final/model.safetensors) -> save as `model-finetuned\final\model.safetensors`
+- [LoRA adapter_model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/_trainer/final/adapter_model.safetensors) -> save as `model-finetuned\_trainer\final\adapter_model.safetensors`
+
+Verify the model files are real downloads, not pointer stubs:
+
+```powershell
+Get-Item `
+  "model.safetensors", `
+  "model-finetuned\final\model.safetensors", `
+  "model-finetuned\_trainer\final\adapter_model.safetensors" |
+  Select-Object Name, Length
+
+Get-FileHash "model.safetensors" -Algorithm SHA256
+Get-FileHash "model-finetuned\final\model.safetensors" -Algorithm SHA256
+Get-FileHash "model-finetuned\_trainer\final\adapter_model.safetensors" -Algorithm SHA256
+```
+
+Expected sizes:
+
+- `model.safetensors`: `833938108` bytes
+- `model-finetuned\final\model.safetensors`: `833938108` bytes
+- `model-finetuned\_trainer\final\adapter_model.safetensors`: `5329152` bytes
+
+Expected SHA-256 hashes:
 ```
 845fc4bd93c525b86124c58ab4f56c9eacf8587953086b14c501fab25957c007  model.safetensors
 1ff2a86d7470057cc200f94f1c7fd078c2ace437065a8c14c77d1b80a345fa92  model-finetuned/final/model.safetensors
 eca4d810c9480a59a621d11ba2d5ab56a409cb349f9fc03e3bc9c9012355b73c  model-finetuned/_trainer/final/adapter_model.safetensors
+```
+
+If any `.safetensors` file is only a few hundred bytes, it is still a Git LFS pointer file. Download
+that file again from the direct link above.
+
+Optional Git LFS path for machines that already have Git LFS:
+
+```powershell
+git clone https://github.com/Glass-Half-Full/PII-Model.git
+cd PII-Model
+git lfs pull
 ```
 
 The root `model.safetensors` is the base local model. The accepted fine-tuned checkpoint is in
