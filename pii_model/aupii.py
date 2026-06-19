@@ -8,7 +8,8 @@ Combines two engines, each used where it is strongest:
     Medicare, ABN, ACN) and a custom **BSB** recognizer — where it has the best precision.
 
 Both feed the GIRP rules (`girp.classify_elements`) to assign Public / Private / Confidential /
-Highly Confidential. Runs fully locally/offline (gliner2 weights + spaCy model + regex; no API calls).
+Highly Confidential. Runs fully locally/offline (gliner2 weights + regex/checksum recognizers;
+no API calls).
 
 Why hybrid: the zero-shot model gives recall for contextual elements, while checksum and regex
 recognizers give precision for structured identifiers.
@@ -18,8 +19,16 @@ from __future__ import annotations
 import os
 import re
 
-from girp import (classify_elements, explain, found_labels, RANK, LEVELS,
-                  load_local_model, _robust_batch_extract)
+try:
+    from .girp import (
+        classify_elements, explain, found_labels, RANK, LEVELS,
+        load_local_model, _robust_batch_extract, _auto_batch_size,
+    )
+except ImportError:  # Allows running this file directly from the package directory.
+    from girp import (
+        classify_elements, explain, found_labels, RANK, LEVELS,
+        load_local_model, _robust_batch_extract, _auto_batch_size,
+    )
 
 # Phone-only regex backstop: rescues well-formed international (+NN ...) numbers the model
 # misses (e.g. "ph +61 4.. .. ..") so the name+phone combination still fires. Higher precision
@@ -83,36 +92,58 @@ PRESIDIO_BUSINESS = {"AU_ABN": "abn", "AU_ACN": "acn"}
 REVIEW_LEVELS = {"Highly Confidential"}
 
 
-def build_analyzer(spacy_model: str = "en_core_web_sm"):
-    """Build a Presidio analyzer (default + Australian recognizers + custom BSB) on a lightweight
-    spaCy model. The hybrid uses Presidio's pattern/checksum recognizers (regex/Luhn/context), not
-    its spaCy NER (gliner2 does NER), so `en_core_web_sm` (~12 MB) is enough and keeps the footprint
-    small for offline / RTX 2050 use. Falls back to Presidio's default model if the named one is absent.
+class _NoOpNlpEngine:
+    """Minimal Presidio NLP engine for pattern/checksum recognizers.
+
+    Presidio creates a spaCy engine when no NLP engine is supplied. The shipped hybrid does not use
+    Presidio's NER, so this keeps the analyzer local without requiring `python -m spacy download`.
     """
+
+    def load(self) -> None:
+        return None
+
+    def is_loaded(self) -> bool:
+        return True
+
+    def process_text(self, text: str, language: str):
+        from presidio_analyzer.nlp_engine import NlpArtifacts
+        return NlpArtifacts([], [], [], [], self, language)
+
+    def process_batch(self, texts, language: str, batch_size: int = 1, n_process: int = 1, **kwargs):
+        for text in texts:
+            yield text, self.process_text(text, language)
+
+    def is_stopword(self, word: str, language: str) -> bool:
+        return False
+
+    def is_punct(self, word: str, language: str) -> bool:
+        return all(not ch.isalnum() for ch in str(word))
+
+    def get_supported_entities(self):
+        return []
+
+    def get_supported_languages(self):
+        return ["en"]
+
+
+def build_analyzer(spacy_model: str | None = None):
+    """Build Presidio pattern/checksum recognizers without downloading a spaCy language model."""
     from presidio_analyzer import AnalyzerEngine, RecognizerRegistry, PatternRecognizer, Pattern
-    from presidio_analyzer.nlp_engine import NlpEngineProvider
     from presidio_analyzer.predefined_recognizers import (
         AuTfnRecognizer, AuMedicareRecognizer, AuAbnRecognizer, AuAcnRecognizer)
-    nlp_engine = None
-    try:
-        nlp_engine = NlpEngineProvider(nlp_configuration={
-            "nlp_engine_name": "spacy",
-            "models": [{"lang_code": "en", "model_name": spacy_model}],
-        }).create_engine()
-    except Exception as e:
-        print(f"[aupii] spaCy model {spacy_model!r} unavailable ({e}); using Presidio default.")
+
     reg = RecognizerRegistry()
     reg.load_predefined_recognizers()
     for rec in (AuTfnRecognizer(), AuMedicareRecognizer(), AuAbnRecognizer(), AuAcnRecognizer()):
         reg.add_recognizer(rec)
-    # Australian BSB (bank-state-branch): 6 digits, usually NNN-NNN; needs bank context to count.
+    # Australian BSB (bank-state-branch): 6 digits, usually NNN-NNN.
     bsb = PatternRecognizer(
         supported_entity="AU_BSB",
-        patterns=[Pattern(name="bsb", regex=r"\b\d{3}-\d{3}\b", score=0.3)],
+        patterns=[Pattern(name="bsb", regex=r"\b\d{3}-\d{3}\b", score=0.5)],
         context=["bsb", "branch", "bank", "account"],
     )
     reg.add_recognizer(bsb)
-    return AnalyzerEngine(registry=reg, nlp_engine=nlp_engine) if nlp_engine else AnalyzerEngine(registry=reg)
+    return AnalyzerEngine(registry=reg, nlp_engine=_NoOpNlpEngine())
 
 
 def presidio_elements(analyzer, text, score_threshold=0.4):
@@ -193,7 +224,6 @@ def classify_columns_hybrid(model, analyzer, df, columns, threshold: float = 0.7
     missing = [c for c in columns if c not in df.columns]
     if missing:
         raise KeyError(f"Columns not found: {missing}. Available: {list(df.columns)}")
-    from girp import _auto_batch_size
     bs = batch_size or _auto_batch_size(model)
     out = df.copy()
     row_rank = [0] * len(out)
@@ -280,10 +310,9 @@ def load_gliner_pii(model: str = "knowledgator/gliner-pii-small-v1.0", device: s
                     revision: str = None, offline: bool = True):
     """Load a PII-specialized original-GLiNER model (wrapped for the hybrid) — LOCAL-ONLY by default.
 
-    `model` may be a local directory OR a Hugging Face id that is already cached. With offline=True
-    (default) no network is used: the Hub is disabled via env vars. To fetch it the first time, run
-    once on a networked machine (`GLiNER.from_pretrained("knowledgator/gliner-pii-small-v1.0")`) or
-    vendor the model directory and pass its path. Pin `revision=` for reproducibility.
+    `model` should be a local directory for the GitHub-only package. With offline=True (default) no
+    network is used: the Hub is disabled via env vars. If you use this optional adapter, vendor the
+    model directory in your own copy and pass its path.
     """
     if offline:
         os.environ.setdefault("HF_HUB_OFFLINE", "1")

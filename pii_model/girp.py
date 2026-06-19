@@ -488,8 +488,9 @@ def pick_device() -> str:
 
 
 def default_model_dir() -> str:
-    """The folder holding the local model files (same folder as this module)."""
-    return os.path.dirname(os.path.abspath(__file__))
+    """The default base model folder in this repository."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(repo_root, "models", "base")
 
 
 def load_local_model(model_dir: str = None, device: str = "auto"):
@@ -512,8 +513,8 @@ def load_local_model(model_dir: str = None, device: str = "auto"):
     if not os.path.exists(weights) or os.path.getsize(weights) < 1_000_000:
         raise RuntimeError(
             f"{weights!r} is missing or is a Git-LFS pointer stub (the real file is ~800 MB). "
-            "Download the real weights: 'git lfs pull', or fetch model.safetensors from the repo's "
-            "raw/LFS URL and place it here.")
+            "Run scripts/download_windows.ps1 or fetch the file from the repo's raw GitHub URL "
+            "and place it here.")
 
     from gliner2 import GLiNER2
     dev = pick_device() if device == "auto" else device

@@ -11,6 +11,5 @@ errors/
 reviews/
 loop_state.json
 
-# Keep accidental extra checkpoints out of Git. The shipped fine-tuned checkpoint is already tracked
-# under this directory via explicit Git LFS entries.
+# Keep accidental old training-output folders out of Git. The shipped checkpoints live under models/.
 model-finetuned/

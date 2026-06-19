@@ -1,11 +1,7 @@
 # Australian hybrid PII extras (for aupii.py) — install ON TOP of requirements.txt:
 #     python -m pip install -r requirements.txt -r requirements-hybrid.txt
-#     python -m spacy download en_core_web_sm
 #
-# Adds Microsoft Presidio (checksum/regex recognizers + Australian TFN/Medicare/ABN/ACN) and spaCy,
-# plus the optional lightweight PII model library (gliner) for the RTX 2050 / CPU variant.
-# Everything still runs locally/offline at inference time — no API calls.
+# Adds Microsoft Presidio checksum/regex recognizers + Australian TFN/Medicare/ABN/ACN.
+# No spaCy language-model download is needed; aupii.py supplies a no-op NLP engine because the
+# hybrid uses Presidio for pattern/checksum recognition and GLiNER2 for NER.
 presidio-analyzer>=2.2
-presidio-anonymizer>=2.2
-spacy>=3.7
-gliner>=0.2

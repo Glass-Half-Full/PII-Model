@@ -1,5 +1,5 @@
 # Local PII & GIRP classification — dependencies.
-# Target: Python 3.13 on Windows (also works on macOS/Linux), CPU or NVIDIA GPU.
+# Target: Python 3.12 on Windows (also works on macOS/Linux), CPU or NVIDIA GPU.
 # Install (no venv/conda) via pip / your internal mirror:
 #     python -m pip install -r requirements.txt
 #
