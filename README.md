@@ -39,23 +39,23 @@ New-Item -ItemType Directory -Force -Path "model-finetuned\final" | Out-Null
 New-Item -ItemType Directory -Force -Path "model-finetuned\_trainer\final" | Out-Null
 
 Invoke-WebRequest `
-  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model.safetensors" `
+  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model.safetensors" `
   -OutFile "model.safetensors"
 
 Invoke-WebRequest `
-  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/final/model.safetensors" `
+  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/final/model.safetensors" `
   -OutFile "model-finetuned\final\model.safetensors"
 
 Invoke-WebRequest `
-  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/_trainer/final/adapter_model.safetensors" `
+  -Uri "https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/_trainer/final/adapter_model.safetensors" `
   -OutFile "model-finetuned\_trainer\final\adapter_model.safetensors"
 ```
 
 Direct model links if you prefer clicking and saving manually:
 
-- [Base model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model.safetensors) -> save as `model.safetensors`
-- [Fine-tuned model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/final/model.safetensors) -> save as `model-finetuned\final\model.safetensors`
-- [LoRA adapter_model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/main/model-finetuned/_trainer/final/adapter_model.safetensors) -> save as `model-finetuned\_trainer\final\adapter_model.safetensors`
+- [Base model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model.safetensors) -> save as `model.safetensors`
+- [Fine-tuned model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/final/model.safetensors) -> save as `model-finetuned\final\model.safetensors`
+- [LoRA adapter_model.safetensors](https://media.githubusercontent.com/media/Glass-Half-Full/PII-Model/bd03fabdcb81fe3e77cad377c8bc2e7db60a02f5/model-finetuned/_trainer/final/adapter_model.safetensors) -> save as `model-finetuned\_trainer\final\adapter_model.safetensors`
 
 Verify the model files are real downloads, not pointer stubs:
 
